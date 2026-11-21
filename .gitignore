@@ -4,3 +4,4 @@ app/build/
 dist/*.apk
 local.properties
 *.iml
+.tmp/

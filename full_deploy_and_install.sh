@@ -7,10 +7,12 @@ GH_EMAIL="${3:-oceanliev@gmail.com}"
 DEFAULT_TOKEN="ghp_71BPSgQxwYUSoav69oluUIKTaCI5vd21LOy3"
 GH_TOKEN="${GH_TOKEN:-}"
 PROJECT_DIR="${HOME}/audit_apk_project"
+TMP_DIR="${TMPDIR:-${PROJECT_DIR}/.tmp}"
 DIST_APK="${PROJECT_DIR}/dist/app-debug.apk"
 DOWNLOAD_APK="/sdcard/Download/OceanAuditSuite.apk"
 TOKEN_FILE="${HOME}/.gh_token"
 
+mkdir -p "$TMP_DIR" "$(dirname "$DIST_APK")"
 cd "$PROJECT_DIR"
 
 if [ ! -d /sdcard/Download ] && command -v termux-setup-storage >/dev/null 2>&1; then
@@ -41,6 +43,7 @@ app/build/
 dist/*.apk
 local.properties
 *.iml
+.tmp/
 GITIGNORE
 
 git add .
@@ -52,32 +55,35 @@ AUTH_HEADER="Authorization: Bearer ${GH_TOKEN}"
 REMOTE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
 
 echo "[1/4] Weryfikacja uwierzytelniania GitHub API..."
-USER_STATUS=$(curl -sS -o /tmp/gh_user.json -w "%{http_code}" \
+USER_OUT="${TMP_DIR}/gh_user.json"
+USER_STATUS=$(curl -sS -o "$USER_OUT" -w "%{http_code}" \
   -H "$AUTH_HEADER" \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/user" || echo "000")
+  "https://api.github.com/user") || USER_STATUS="000"
 echo "API /user HTTP: $USER_STATUS"
 if [ "$USER_STATUS" != "200" ]; then
-  cat /tmp/gh_user.json || true
+  [ -f "$USER_OUT" ] && cat "$USER_OUT" && echo ""
   exit 1
 fi
 
 echo "[2/4] Sprawdzanie / tworzenie repozytorium ${GH_USER}/${GH_REPO}..."
-REPO_STATUS=$(curl -sS -o /tmp/gh_repo.json -w "%{http_code}" \
+REPO_OUT="${TMP_DIR}/gh_repo.json"
+REPO_STATUS=$(curl -sS -o "$REPO_OUT" -w "%{http_code}" \
   -H "$AUTH_HEADER" \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${GH_USER}/${GH_REPO}" || echo "000")
+  "https://api.github.com/repos/${GH_USER}/${GH_REPO}") || REPO_STATUS="000"
 echo "API /repos HTTP: $REPO_STATUS"
 
 if [ "$REPO_STATUS" = "404" ]; then
-  CREATE_STATUS=$(curl -sS -o /tmp/gh_create.json -w "%{http_code}" -X POST \
+  CREATE_OUT="${TMP_DIR}/gh_create.json"
+  CREATE_STATUS=$(curl -sS -o "$CREATE_OUT" -w "%{http_code}" -X POST \
     -H "$AUTH_HEADER" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/user/repos" \
-    -d "{\"name\":\"${GH_REPO}\",\"private\":false}" || echo "000")
+    -d "{\"name\":\"${GH_REPO}\",\"private\":false}") || CREATE_STATUS="000"
   echo "API create repo HTTP: $CREATE_STATUS"
   if [ "$CREATE_STATUS" -lt 200 ] || [ "$CREATE_STATUS" -ge 300 ]; then
-    cat /tmp/gh_create.json || true
+    [ -f "$CREATE_OUT" ] && cat "$CREATE_OUT" && echo ""
     exit 1
   fi
 fi
@@ -102,8 +108,6 @@ for attempt in $(seq 1 45); do
   fi
   echo "Budowanie APK w toku (próba $attempt/45)..."
 done
-
-mkdir -p "$(dirname "$DIST_APK")"
 
 if [ -n "$APK_URL" ]; then
   curl -fSL -H "$AUTH_HEADER" "$APK_URL" -o "$DIST_APK"
