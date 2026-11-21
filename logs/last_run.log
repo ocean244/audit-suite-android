@@ -59,3 +59,9 @@ To https://github.com/ocean244/audit-suite-android.git
 11-21 10:38:20.609  3230  3230 I ImeTracker: com.oceansuite.audit:fe106331: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
 11-21 10:38:20.656  3230  3230 I ImeTracker: system_server:1d1ab4e9: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
 [2026-11-21 10:43:36] APP_RUNNING: pkg=com.oceansuite.audit pid=3230
+[main fea4fbb] Add ocean_suite_recover_and_sync.sh
+ 2 files changed, 130 insertions(+)
+ create mode 100755 ocean_suite_recover_and_sync.sh
+To https://github.com/ocean244/audit-suite-android.git
+   fecd9ca..fea4fbb  main -> main
+[2026-11-21 10:43:38] GIT_SYNC: head=fea4fbb
