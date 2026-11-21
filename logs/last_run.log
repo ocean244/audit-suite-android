@@ -1,0 +1,34 @@
+[2026-11-21 10:34:41] APK_OK: /data/data/com.termux/files/home/audit_apk_project/dist/app-debug.apk sha256=f1bc6f679321e3bf5991600e0a37f90709286a8c4c642dfe10a28be6ea172d4b
+[2026-11-21 10:34:41] APK_OK: /sdcard/Download/OceanAuditSuite.apk sha256=f1bc6f679321e3bf5991600e0a37f90709286a8c4c642dfe10a28be6ea172d4b
+[2026-11-21 10:34:41] ADB_ACTIVE: 192.168.1.157:42079
+Performing Streamed Install
+Success
+Starting: Intent { cmp=com.oceansuite.audit/.MainActivity }
+--------- beginning of main
+11-21 10:34:43.307 25500 25550 I SurfaceComposerClient: apply transaction with the first frame. layerId: 17700, bufferData(ID: 109521666048001, frameNumber: 1)
+11-21 10:34:43.308 25500 25550 I VRI[MainActivity]@6c8f622: Received frameCommittedCallback lastAttemptedDrawFrameNum=1 didProduceBuffer=true
+11-21 10:34:43.308 25500 25550 D HWUI    : CFMS:: SetUp Pid : 25500    Tid : 25550
+11-21 10:34:43.309 25500 25500 D VRI[MainActivity]@6c8f622: reportDrawFinished seqId=1
+11-21 10:34:43.347 25500 25550 W qdgralloc: getInterlacedFlag: getMetaData returned 3, defaulting to interlaced_flag = 0
+11-21 10:34:43.348 25500 25500 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=true, type=statusBars, host=com.oceansuite.audit/com.oceansuite.audit.MainActivity
+11-21 10:34:43.349 25500 25500 D VRI[MainActivity]@6c8f622: mThreadedRenderer.initializeIfNeeded()#2 mSurface={isValid=true 0xb4000079be450ca0}
+11-21 10:34:43.349 25500 25500 D InputMethodManager: setCurrentRootViewLocked: updateReceivingDispatcher
+11-21 10:34:43.350 25500 25500 D InputMethodManagerUtils: startInputInner - Id : 0
+11-21 10:34:43.350 25500 25500 I InputMethodManager: startInputInner - IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus
+11-21 10:34:43.361 25500 25550 W qdgralloc: getInterlacedFlag: getMetaData returned 3, defaulting to interlaced_flag = 0
+--------- beginning of system
+11-21 10:34:43.362 25500 25500 D InsetsController: hide(ime())
+11-21 10:34:43.362 25500 25500 I ImeTracker: com.oceansuite.audit:4dde1583: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+11-21 10:34:43.364 25500 25523 D InputTransport: Input channel constructed: 'ClientS', fd=152
+11-21 10:34:43.375 25500 25500 D WindowOnBackDispatcher: setTopOnBackInvokedCallback (unwrapped): ImeOnBackInvokedCallback@192823540 Callback=android.window.IOnBackInvokedCallback$Stub$Proxy@73e102
+11-21 10:34:43.378 25500 25500 I InsetsController: onStateChanged: host=com.oceansuite.audit/com.oceansuite.audit.MainActivity, from=android.view.ViewRootImpl.onInsetsStateChanged:3319, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 1440, 3120), mDisplayCutout=DisplayCutout{insets=Rect(0, 128 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(686, 0 - 754, 128), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=1440 displayHeight=3120 physicalDisplayWidth=1440 physicalDisplayHeight=3120 density={3.75} cutoutSpec={M 0,0 H -9.066666666666667 V 34.13333333333333 H 9.066666666666667 V 0 H 0 Z @dp} rotation={0} scale={1.0} physicalPixelDisplaySizeRatio={1.0}}} sideOverrides={}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=3, center=Point(3, 3)}, RoundedCorner{position=TopRight, radius=3, center=Point(1437, 3)}, RoundedCorner{position=BottomRight, radius=3, center=Point(1437, 3117)}, RoundedCorner{position=BottomLeft, radius=3, center=Point(3, 3117)}]}  mRoundedCornerFrame=Rect(0, 0 - 1440, 3120), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(1364, 0 - 1440, 129) rotation=0}, mDisplayShape=DisplayShape{type=2, displayWidth=1440, displayHeight=3120, physicalPixelDisplaySizeRatio=1.0, rotation=0, offsetX=0, offsetY=0, scale=1.0}, mSources= { InsetsSource: {bfa80001 mType=navigationBars mFrame=[0,3038][1440,3120] mAttachedInsets=null mVisible=true mFlags= mSideHint=BOTTOM}, InsetsSource: {bfa80004 mType=systemGestures mFrame=[0,0][0,0] mAttachedInsets=null mVisible=true mFlags= mSideHint=NONE}, InsetsSource: {bfa80005 mType=mandatorySystemGestures mFrame=[0,3038][1440,3120] mAttachedInsets=null mVisible=true mFlags= mSideHint=BOTTOM}, InsetsSource: {bfa80006 mType=tappableElement mFrame=[0,3038][1440,3120] mAttachedInsets=null mVisible=true mFlags= mSideHint=BOTTOM}, InsetsSource: {bfa80024 mType=systemGestures mFrame=[0,0][0,0] mAttachedInsets=null mVisible=true mFlags= mSideHint=NONE}, InsetsSource: {3 mType=ime mFrame=[0,2514][1440,3120] mAttachedInsets=null mVisible=false mFlags= mSideHint=BOTTOM}, InsetsSource: {27 mType=displayCutout mFrame=[0,0][1440,128] mAttachedInsets=null mVisible=true mFlags= mSideHint=TOP}, InsetsSource: {32080000 mType=statusBars mFrame=[0,0][1440,129] mAttachedInsets=null mVisible=true mFlags= mSideHint=TOP}, InsetsSource: {32080005 mType=mandatorySystemGestures mFrame=[0,0][1440,149] mAttachedInsets=null mVisible=true mFlags= mSideHint=TOP}, InsetsSource: {32080006 mType=tappableElement mFrame=[0,0][1440,129] mAttachedInsets=null mVisible=true mFlags= mSideHint=TOP} }
+11-21 10:34:43.378 25500 25500 I VRI[MainActivity]@6c8f622: handleResized, frames=ClientWindowFrames{frame=[0,0][1440,3120] display=[0,0][1440,3120] parentFrame=[0,0][0,0]} displayId=0 dragResizing=false compatScale=1.0 frameChanged=false attachedFrameChanged=false configChanged=false displayChanged=false compatScaleChanged=false dragResizingChanged=false
+11-21 10:34:43.378 25500 25500 I VRI[MainActivity]@6c8f622: handleResized seqId=1 mSeqId=1 mSyncSeqId=0 syncWithBuffers=false
+11-21 10:34:43.379 25500 25500 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=false, type=ime, host=com.oceansuite.audit/com.oceansuite.audit.MainActivity
+11-21 10:34:43.379 25500 25500 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=true, type=navigationBars, host=com.oceansuite.audit/com.oceansuite.audit.MainActivity
+11-21 10:34:43.379 25500 25500 I ImeTracker: system_server:13008d25: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+11-21 10:34:43.384 25500 25500 D VRI[MainActivity]@6c8f622: WindowInsets changed: ime:null 
+11-21 10:34:43.386 25500 25500 D WindowOnBackDispatcher: setTopOnBackInvokedCallback (unwrapped): android.view.ViewRootImpl$$ExternalSyntheticLambda17@4e8f33e
+11-21 10:34:43.622 25500 25513 I ceansuite.audit: Compiler allocated 5498KB to compile void android.view.ViewRootImpl.performTraversals(long)
+11-21 10:34:43.695 25500 25550 W qdgralloc: getInterlacedFlag: getMetaData returned 3, defaulting to interlaced_flag = 0
+[2026-11-21 10:34:43] APP_RUNNING: pkg=com.oceansuite.audit activity=com.oceansuite.audit/.MainActivity pid=25500
