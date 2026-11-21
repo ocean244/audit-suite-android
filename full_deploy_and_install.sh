@@ -20,15 +20,10 @@ if [ -z "$GH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
   GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
 fi
 
-if [ -z "$GH_TOKEN" ]; then
-  echo -n "Podaj ważny GitHub PAT (scopes: repo, workflow): "
-  read -rs GH_TOKEN
-  echo ""
-fi
-
 GH_TOKEN="$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
 if [ -z "$GH_TOKEN" ]; then
-  echo "BŁĄD: Pusty token." >&2
+  echo "BŁĄD: Brak GH_TOKEN. Uruchom z ważnym tokenem PAT (scopes: repo, workflow):" >&2
+  echo "  GH_TOKEN=\"ghp_...\" $0 ${GH_USER} ${GH_REPO} ${GH_EMAIL}" >&2
   exit 1
 fi
 
@@ -62,7 +57,7 @@ USER_STATUS=$(curl -s -o /tmp/gh_user.json -w "%{http_code}" \
   "https://api.github.com/user")
 
 if [ "$USER_STATUS" != "200" ]; then
-  echo "BŁĄD: Token odrzucony przez GitHub API (HTTP $USER_STATUS). Wygeneruj nowy Classic PAT z scopes: repo, workflow." >&2
+  echo "BŁĄD: Token odrzucony przez GitHub API (HTTP $USER_STATUS). Odpowiedź:" >&2
   cat /tmp/gh_user.json >&2 || true
   exit 1
 fi
@@ -83,6 +78,10 @@ if [ "$REPO_STATUS" = "404" ]; then
     cat /tmp/gh_create.json >&2 || true
     exit 1
   fi
+elif [ "$REPO_STATUS" -lt 200 ] || [ "$REPO_STATUS" -ge 300 ]; then
+  echo "BŁĄD: Dostęp do repozytorium zwrócił HTTP $REPO_STATUS:" >&2
+  cat /tmp/gh_repo.json >&2 || true
+  exit 1
 fi
 
 git remote remove origin 2>/dev/null || true
