@@ -1,461 +1,421 @@
 package com.oceansuite.audit
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStream
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Locale
 import javax.crypto.Mac
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+import kotlin.math.ln
 
 object AuditEngine {
 
-    private val defaultSuffixes = listOf(
-        "", "-backup", "-backups", "-dev", "-stage", "-staging",
-        "-prod", "-production", "-assets", "-static", "-media",
-        "-uploads", "-public", "-private", "-internal", "-logs",
-        "-data", "-archive", "-cdn", "-web", "-app", "-files", "-db", "-test"
+    private val COMMON_WORDS = listOf(
+        "password", "123456", "12345678", "123456789", "qwerty", "abc123",
+        "admin", "letmein", "monkey", "dragon", "111111", "baseball",
+        "iloveyou", "trustno1", "sunshine", "master", "welcome", "shadow",
+        "ashley", "football", "jesus", "michael", "ninja", "mustang",
+        "password1", "12345", "123123", "admin123", "root", "toor",
+        "pass", "guest", "test", "changeme", "default", "superman",
+        "qazwsx", "1234", "1234567", "000000", "666666", "777777",
+        "888888", "999999", "zaq12wsx", "freedom", "starwars", "whatever"
     )
 
-    private val homoglyphs = mapOf(
-        'a' to listOf("а", "à", "á", "â", "ä"),
-        'c' to listOf("с", "ç"),
-        'e' to listOf("е", "è", "é", "ê", "ë"),
-        'i' to listOf("і", "ì", "í", "î", "ï", "l", "1"),
-        'l' to listOf("1", "i", "|"),
-        'o' to listOf("о", "ò", "ó", "ô", "ö", "0"),
-        'p' to listOf("р"),
-        's' to listOf("ѕ", "5"),
-        'w' to listOf("vv"),
-        'x' to listOf("х"),
-        'y' to listOf("у", "ý", "ÿ")
-    )
-
-    private val commonTlds = listOf(
-        "com", "net", "org", "io", "co", "pl", "eu", "biz", "info", "xyz", "app", "dev"
-    )
-
-    private val defaultWordlist = listOf(
-        "123456", "password", "12345678", "qwerty", "123456789", "admin",
-        "letmein", "welcome", "monkey", "dragon", "football", "iloveyou",
-        "123123", "sunshine", "princess", "password1", "qwerty123", "root",
-        "toor", "pass123", "changeme", "master"
-    )
-
-    fun normalizeBrand(brand: String): String {
-        var cleaned = brand.trim().lowercase()
-        cleaned = cleaned.replace(Regex("^https?://"), "")
-        cleaned = cleaned.split("/").firstOrNull() ?: ""
-        if ("." in cleaned && !cleaned.endsWith(".com")) {
-            val ignored = setOf("www", "com", "pl", "org", "net", "io", "co")
-            val parts = cleaned.split(".").filter { it.isNotBlank() && it !in ignored }
-            if (parts.isNotEmpty()) {
-                cleaned = parts.joinToString("-")
-            }
-        }
-        cleaned = cleaned.replace(Regex("[^a-z0-9-]"), "-")
-        cleaned = cleaned.replace(Regex("-{2,}"), "-").trim('-')
-        require(cleaned.isNotEmpty()) { "Nazwa marki lub domeny po normalizacji jest pusta." }
-        return cleaned
+    fun bucketPermutations(brandInput: String): List<String> {
+        val clean = brandInput.trim().lowercase(Locale.ROOT)
+            .replace(Regex("^https?://"), "")
+            .replace(Regex("\\.s3\\.amazonaws\\.com.*$"), "")
+            .replace(Regex("[^a-z0-9-]"), "-")
+            .trim('-')
+        if (clean.isEmpty()) return emptyList()
+        val suffixes = listOf("", "-assets", "-backups", "-dev", "-media", "-static", "-uploads")
+        return suffixes.map { "${clean}${it}" }.distinct()
     }
 
-    fun generateBucketCandidates(brand: String, customWordsCsv: String = ""): List<String> {
-        val base = normalizeBrand(brand)
-        val compact = base.replace("-", "")
-        val roots = linkedSetOf(base)
-        if (compact.isNotEmpty() && compact != base) {
-            roots.add(compact)
-        }
-        customWordsCsv.split(",")
-            .map { it.trim().lowercase().replace(Regex("[^a-z0-9-]"), "") }
-            .filter { it.isNotEmpty() }
-            .forEach { w ->
-                roots.add("$base-$w")
-                roots.add("$w-$base")
-                roots.add("$compact-$w")
+    fun runBucketBuster(brandInput: String, owned: Boolean): String {
+        if (!owned) return "BLAD: Wymagane potwierdzenie 'I own this bucket / brand'."
+        val candidates = bucketPermutations(brandInput)
+        if (candidates.isEmpty()) return "BLAD: Podaj poprawna nazwe marki lub bucketa."
+        val sb = StringBuilder()
+        sb.append("=== BUCKET BUSTER REPORT ===\n")
+        sb.append("Marka/Cel: ${brandInput.trim()}\n")
+        sb.append("Permutacje: ${candidates.joinToString(", ")}\n")
+        var publicCount = 0
+        for (name in candidates) {
+            val s3Url = "https://$name.s3.amazonaws.com/?list-type=2"
+            val s3Resp = httpGet(s3Url)
+            if (s3Resp != null && s3Resp.code == 200 && s3Resp.body.contains("<Key>")) {
+                publicCount++
+                val keys = Regex("<Key>([^<]+)</Key>").findAll(s3Resp.body).map { it.groupValues[1] }.take(20).toList()
+                sb.append("[S3 PUBLIC] $name ($s3Url) -> obiektow: ${keys.size}\n")
+                keys.forEach { k -> sb.append("  * $k -> https://$name.s3.amazonaws.com/$k\n") }
             }
-
-        val out = linkedSetOf<String>()
-        for (root in roots.sorted()) {
-            for (suffix in defaultSuffixes) {
-                val candidate = "$root$suffix"
-                if (candidate.length in 3..63) {
-                    out.add(candidate)
-                }
+            val gcsUrl = "https://storage.googleapis.com/storage/v1/b/$name/o"
+            val gcsResp = httpGet(gcsUrl)
+            if (gcsResp != null && gcsResp.code == 200 && gcsResp.body.contains("\"name\"")) {
+                publicCount++
+                val objs = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").findAll(gcsResp.body).map { it.groupValues[1] }.take(20).toList()
+                sb.append("[GCS PUBLIC] $name ($gcsUrl) -> obiektow: ${objs.size}\n")
+                objs.forEach { o -> sb.append("  * $o -> https://storage.googleapis.com/storage/v1/b/$name/o/${o}\n") }
             }
         }
-        return out.toList()
+        if (publicCount == 0) {
+            sb.append("Brak publicznych bucketow dla podanej marki.\n")
+        }
+        sb.append("Obrona: Wlacz Block Public Access i wylacz anonimowy listing.\n")
+        return sb.toString()
     }
 
-    suspend fun scanBuckets(brand: String, customWordsCsv: String = ""): String =
-        withContext(Dispatchers.IO) {
-            val candidates = generateBucketCandidates(brand, customWordsCsv)
-            val findings = coroutineScope {
-                candidates.flatMap { name ->
-                    listOf(
-                        async { probeS3(name) },
-                        async { probeGcs(name) }
-                    )
-                }.awaitAll()
-            }
-            val publicItems = findings.filter { it.startsWith("[PUBLIC_LISTABLE]") }
-            val restrictedItems = findings.filter { it.startsWith("[RESTRICTED]") }
-
-            buildString {
-                appendLine("=== BUCKET BUSTER REPORT ===")
-                appendLine("Marka bazowa: ${normalizeBrand(brand)}")
-                appendLine("Liczba kandydatów: ${candidates.size} (testów: ${findings.size})")
-                appendLine("Publiczne (listable): ${publicItems.size}")
-                appendLine("Chronione (401/403): ${restrictedItems.size}")
-                appendLine()
-                if (publicItems.isNotEmpty()) {
-                    appendLine("--- ZASOBY PUBLICZNE ---")
-                    publicItems.forEach { appendLine(it) }
-                    appendLine()
-                }
-                if (restrictedItems.isNotEmpty()) {
-                    appendLine("--- ZASOBY CHRONIONE ---")
-                    restrictedItems.take(25).forEach { appendLine(it) }
-                }
-                if (publicItems.isEmpty() && restrictedItems.isEmpty()) {
-                    appendLine("Brak wykrytych zasobów publicznych lub chronionych dla wygenerowanych kandydatów.")
-                }
-            }
-        }
-
-    private fun probeS3(bucket: String): String {
-        val urlStr = "https://$bucket.s3.amazonaws.com/?list-type=2&max-keys=5"
-        return try {
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 5000
-                readTimeout = 5000
-                setRequestProperty("User-Agent", "OceanAuditSuite/1.0")
-            }
-            val code = conn.responseCode
-            val body = readStreamSafe(if (code in 200..299) conn.inputStream else conn.errorStream, 4096)
-            conn.disconnect()
-            when (code) {
-                in 200..299 -> {
-                    val keys = Regex("<Key>").findAll(body).count()
-                    "[PUBLIC_LISTABLE] S3 | $bucket | HTTP $code | <Key>: $keys | $urlStr"
-                }
-                403 -> "[RESTRICTED] S3 | $bucket | HTTP 403 (AccessDenied)"
-                404 -> "[NOT_FOUND] S3 | $bucket | HTTP 404"
-                else -> "[HTTP_$code] S3 | $bucket | HTTP $code"
-            }
-        } catch (ex: Exception) {
-            "[ERR] S3 | $bucket | ${ex.message ?: "Błąd sieci"}"
-        }
-    }
-
-    private fun probeGcs(bucket: String): String {
-        val urlStr = "https://storage.googleapis.com/storage/v1/b/$bucket/o?maxResults=5"
-        return try {
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 5000
-                readTimeout = 5000
-                setRequestProperty("User-Agent", "OceanAuditSuite/1.0")
-            }
-            val code = conn.responseCode
-            val body = readStreamSafe(if (code in 200..299) conn.inputStream else conn.errorStream, 8192)
-            conn.disconnect()
-            when (code) {
-                in 200..299 -> {
-                    val count = runCatching {
-                        val json = JSONObject(body)
-                        json.optJSONArray("items")?.length() ?: 0
-                    }.getOrDefault(0)
-                    "[PUBLIC_LISTABLE] GCS | $bucket | HTTP $code | items: $count | $urlStr"
-                }
-                401, 403 -> "[RESTRICTED] GCS | $bucket | HTTP $code"
-                404 -> "[NOT_FOUND] GCS | $bucket | HTTP 404"
-                else -> "[HTTP_$code] GCS | $bucket | HTTP $code"
-            }
-        } catch (ex: Exception) {
-            "[ERR] GCS | $bucket | ${ex.message ?: "Błąd sieci"}"
-        }
-    }
-
-    fun generateLookalikeDomains(domain: String, limit: Int = 60): List<String> {
-        var cleaned = domain.trim().lowercase().trimEnd('.')
-        if ("://" in cleaned) {
-            cleaned = cleaned.substringAfter("://")
-        }
-        cleaned = cleaned.substringBefore("/")
-        require("." in cleaned) { "Nieprawidłowa nazwa domeny: $domain" }
-        val label = cleaned.substringBeforeLast(".")
-        val tld = cleaned.substringAfterLast(".")
-        require(label.isNotEmpty() && tld.isNotEmpty()) { "Nieprawidłowa struktura domeny: $domain" }
-
-        val variants = linkedSetOf<String>()
+    fun generateLookalikes(domainInput: String): List<String> {
+        val base = domainInput.trim().lowercase(Locale.ROOT)
+            .replace(Regex("^https?://"), "")
+            .substringBefore("/")
+        if (!base.contains(".")) return emptyList()
+        val parts = base.split(".", limit = 2)
+        val label = parts[0]
+        val tld = parts[1]
+        val out = LinkedHashSet<String>()
+        out.add(base)
+        if (label.contains("m")) out.add("${label.replace("m", "rn")}.$tld")
+        if (label.contains("rn")) out.add("${label.replace("rn", "m")}.$tld")
+        if (label.contains("o")) out.add("${label.replace("o", "0")}.$tld")
+        if (label.contains("0")) out.add("${label.replace("0", "o")}.$tld")
+        if (label.contains("l")) out.add("${label.replace("l", "1")}.$tld")
+        if (label.contains("i")) out.add("${label.replace("i", "1")}.$tld")
+        if (label.contains("w")) out.add("${label.replace("w", "vv")}.$tld")
         for (i in label.indices) {
-            val ch = label[i]
-            val omitted = label.removeRange(i, i + 1)
-            if (omitted.isNotEmpty()) variants.add("$omitted.$tld")
-
-            val duplicated = label.substring(0, i) + ch + ch + label.substring(i + 1)
-            variants.add("$duplicated.$tld")
-
-            if (i + 1 < label.length) {
-                val chars = label.toCharArray()
-                val tmp = chars[i]
-                chars[i] = chars[i + 1]
-                chars[i + 1] = tmp
-                variants.add("${String(chars)}.$tld")
-            }
-
-            homoglyphs[ch].orEmpty().forEach { glyph ->
-                val replaced = label.substring(0, i) + glyph + label.substring(i + 1)
-                variants.add("$replaced.$tld")
-            }
+            out.add("${label.removeRange(i, i + 1)}.$tld")
+            out.add("${label.substring(0, i + 1)}${label[i]}${label.substring(i + 1)}.$tld")
         }
-        for (altTld in commonTlds) {
-            variants.add("$label.$altTld")
+        for (altTld in listOf("com", "co", "net", "org", "io")) {
+            out.add("$label.$altTld")
         }
-        variants.remove("$label.$tld")
-        return variants.sorted().take(limit.coerceAtLeast(1))
+        return out.take(36).toList()
     }
 
-    suspend fun auditDomains(domain: String, limit: Int = 60): String =
-        withContext(Dispatchers.IO) {
-            val candidates = generateLookalikeDomains(domain, limit)
-            val resolved = coroutineScope {
-                candidates.map { cand ->
-                    async {
-                        val aRecs = dnsQuery(cand, "A")
-                        val mxRecs = dnsQuery(cand, "MX")
-                        Triple(cand, aRecs, mxRecs)
-                    }
-                }.awaitAll()
-            }.filter { (_, a, mx) -> a.isNotEmpty() || mx.isNotEmpty() }
-
-            buildString {
-                appendLine("=== DOPPELGANGER DNS REPORT ===")
-                appendLine("Domena bazowa: ${domain.trim().lowercase()}")
-                appendLine("Wygenerowano wariantów: ${candidates.size}")
-                appendLine("Aktywne w DNS (A lub MX): ${resolved.size}")
-                appendLine()
-                if (resolved.isEmpty()) {
-                    appendLine("Brak aktywnych rekordów A/MX dla sprawdzonych wariantów.")
-                } else {
-                    resolved.forEach { (dom, a, mx) ->
-                        val mxFlag = if (mx.isNotEmpty()) "MX_ACTIVE" else "NO_MX"
-                        appendLine("$dom [$mxFlag] | A=${a.joinToString(",")} | MX=${mx.joinToString(",")}")
-                    }
-                }
+    fun runDoppelganger(domainInput: String): String {
+        val candidates = generateLookalikes(domainInput)
+        if (candidates.isEmpty()) return "BLAD: Podaj poprawna domene (np. przyklad.pl)."
+        val sb = StringBuilder()
+        sb.append("=== DOPPELGANGER RADAR ===\n")
+        sb.append("Autoryzowane rozpoznanie wlasnej domeny: ${domainInput.trim()}\n")
+        var regCount = 0
+        var mxCount = 0
+        for (cand in candidates) {
+            val aJson = httpGet("https://dns.google/resolve?name=$cand&type=A")?.body ?: ""
+            val mxJson = httpGet("https://dns.google/resolve?name=$cand&type=MX")?.body ?: ""
+            val hasA = aJson.contains("\"data\"")
+            val hasMx = mxJson.contains("\"data\"")
+            val status = if (hasA && hasMx) {
+                regCount++
+                mxCount++
+                "PULSUJACY [ZAREJESTROWANY + MX]"
+            } else if (hasA) {
+                regCount++
+                "CZERWONY [ZAREJESTROWANY]"
+            } else {
+                "SZARY [NIEZAREJESTROWANY]"
             }
+            sb.append("$cand -> $status\n")
         }
-
-    private fun dnsQuery(name: String, type: String): List<String> {
-        return try {
-            val encName = URLEncoder.encode(name, StandardCharsets.UTF_8.toString())
-            val urlStr = "https://dns.google/resolve?name=$encName&type=$type"
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 4000
-                readTimeout = 4000
-                setRequestProperty("Accept", "application/dns-json")
-            }
-            val code = conn.responseCode
-            val raw = readStreamSafe(if (code in 200..299) conn.inputStream else conn.errorStream, 8192)
-            conn.disconnect()
-            if (code !in 200..299) return emptyList()
-
-            val root = JSONObject(raw)
-            val arr = root.optJSONArray("Answer") ?: return emptyList()
-            val list = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val item = arr.optJSONObject(i) ?: continue
-                val data = item.optString("data", "").trimEnd('.')
-                if (data.isNotEmpty()) list.add(data)
-            }
-            list
-        } catch (_: Exception) {
-            emptyList()
-        }
+        sb.append("Podsumowanie: zarejestrowane=$regCount, z MX=$mxCount, sprawdzone=${candidates.size}\n")
+        sb.append("Obrona: Rejestruj kluczowe warianty, monitoruj logi CT i szkol personel.\n")
+        return sb.toString()
     }
 
-    fun detectHashAlgorithm(digestHex: String): String {
-        val clean = digestHex.trim().lowercase()
-        require(clean.matches(Regex("^[0-9a-f]+$"))) {
-            "Skrót musi składać się wyłącznie ze znaków heksadecymalnych (0-9, a-f)."
-        }
-        return when (clean.length) {
+    fun crackHash(hashInput: String, candidatesRaw: String, owned: Boolean): String {
+        if (!owned) return "BLAD: Wymagane potwierdzenie 'I own this hash'."
+        val target = hashInput.trim().lowercase(Locale.ROOT)
+        val algo = when (target.length) {
             32 -> "MD5"
             40 -> "SHA-1"
             64 -> "SHA-256"
-            else -> throw IllegalArgumentException(
-                "Nieobsługiwana długość skrótu (${clean.length}). Obsługiwane: 32 (MD5), 40 (SHA1), 64 (SHA256)."
-            )
+            else -> return "BLAD: Nieobslugiwana dlugosc skrotu (${target.length}). Obslugiwane: 32 (MD5), 40 (SHA1), 64 (SHA256)."
         }
-    }
-
-    fun crackHash(digestHex: String, customCandidatesText: String = ""): String {
-        val target = digestHex.trim().lowercase()
-        val algo = detectHashAlgorithm(target)
-        val candidates = buildList {
-            if (customCandidatesText.isNotBlank()) {
-                customCandidatesText.split(Regex("[\\r\\n,]+"))
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .forEach { add(it) }
-            }
-            addAll(defaultWordlist)
-        }.distinct()
-
+        val customWords = candidatesRaw.split(Regex("[\\r\\n,]+")).map { it.trim() }.filter { it.isNotEmpty() }
+        val pool = if (customWords.isNotEmpty()) customWords + COMMON_WORDS else COMMON_WORDS
         val startNs = System.nanoTime()
         var attempts = 0
-        var matchedSecret: String? = null
-
-        for (cand in candidates) {
+        for (word in pool) {
             attempts++
-            val md = MessageDigest.getInstance(algo)
-            val digestBytes = md.digest(cand.toByteArray(StandardCharsets.UTF_8))
-            val hex = digestBytes.joinToString("") { "%02x".format(it) }
-            if (hex == target) {
-                matchedSecret = cand
-                break
+            val digest = digestHex(algo, word)
+            if (digest == target) {
+                val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
+                return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: CRACKED: $word\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (bcrypt / argon2) oraz dlugie unikalne hasla."
             }
         }
-
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
-        return buildString {
-            appendLine("=== HASH CRACKER REPORT ===")
-            appendLine("Algorytm: $algo")
-            appendLine("Cel: $target")
-            appendLine("Status: ${if (matchedSecret != null) "CRACKED" else "NOT_FOUND"}")
-            if (matchedSecret != null) {
-                appendLine("Hasło: $matchedSecret")
+        return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: NOT FOUND\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (bcrypt / argon2) oraz dlugie unikalne hasla."
+    }
+
+    fun runAttackSurface(domainInput: String): String {
+        val cleanDomain = domainInput.trim()
+            .replace(Regex("^https?://"), "")
+            .substringBefore("/")
+        if (cleanDomain.isEmpty()) return "BLAD: Podaj wlasna domene."
+        val baseUrl = "https://$cleanDomain"
+        val panelPaths = listOf(
+            "/admin", "/administrator", "/wp-admin", "/login", "/phpmyadmin",
+            "/adminer.php", "/.git/HEAD", "/.env", "/actuator", "/actuator/env",
+            "/debug", "/server-status", "/config", "/swagger", "/manager/html", "/.well-known"
+        )
+        val notFoundBody = httpGet("$baseUrl/nonexistent-ocean-probe-404-check")?.body ?: ""
+        val openPanels = mutableListOf<String>()
+        for (p in panelPaths) {
+            val r = httpGet("$baseUrl$p")
+            if (r != null && r.code in 200..299 && r.body.isNotEmpty() && r.body != notFoundBody) {
+                openPanels.add("$p (HTTP ${r.code})")
             }
-            appendLine("Liczba prób: $attempts")
-            appendLine("Czas: ${"%.3f".format(elapsedMs)} ms")
+        }
+        val logPaths = listOf("/logs/app.log", "/log/error.log")
+        val logHits = mutableListOf<String>()
+        for (lp in logPaths) {
+            val r = httpGet("$baseUrl$lp")
+            if (r != null && r.code in 200..299 && r.body.isNotEmpty()) {
+                val emails = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}").findAll(r.body).count()
+                val tokens = Regex("(token|api[_-]?key|secret|bearer)[=: ]+[A-Za-z0-9._-]{8,}", RegexOption.IGNORE_CASE).findAll(r.body).count()
+                logHits.add("$lp -> tokens=$tokens, emails=$emails")
+            }
+        }
+        val keyPaths = listOf(
+            "/.ssh/id_rsa", "/server.key", "/private.key", "/privkey.pem",
+            "/.ssh/id_ed25519", "/key.pem", "/ssl/private.key"
+        )
+        val keyHits = mutableListOf<String>()
+        for (kp in keyPaths) {
+            val r = httpGet("$baseUrl$kp")
+            if (r != null && r.code in 200..299 && r.body.contains("-----BEGIN") && r.body.contains("PRIVATE KEY-----")) {
+                val masked = r.body.take(12) + "..." + r.body.takeLast(8)
+                keyHits.add("CAPTURED $kp -> $masked")
+            }
+        }
+        val totalLoot = openPanels.size + logHits.size + keyHits.size
+        val modulesWithHits = listOf(openPanels.isNotEmpty(), logHits.isNotEmpty(), keyHits.isNotEmpty()).count { it }
+        val severity = when {
+            modulesWithHits == 3 -> "CRITICAL: FULL ATTACK SURFACE EXPOSED"
+            totalLoot > 0 -> "EXPOSED"
+            else -> "CLEAN"
+        }
+        return buildString {
+            append("=== ATTACK SURFACE SCANNER ===\n")
+            append("EXPOSURE: $severity | Loot: $totalLoot\n")
+            append("[Karta 1: Panels (${openPanels.size})] ${if (openPanels.isEmpty()) "Brak otwartych paneli" else openPanels.joinToString("; ")}\n")
+            append("  Obrona: Uwierzytelnianie i usuwanie nieuzywanych paneli.\n")
+            append("[Karta 2: Logs (${logHits.size})] ${if (logHits.isEmpty()) "Brak wyciekow w logach" else logHits.joinToString("; ")}\n")
+            append("  Obrona: Nie udostepniaj logow w katalogu web i maskuj sekrety.\n")
+            append("[Karta 3: Keys (${keyHits.size})] ${if (keyHits.isEmpty()) "Brak kluczy prywatnych" else keyHits.joinToString("; ")}\n")
+            append("  Obrona: Trzymaj klucze poza web root i rotuj przy ekspozycji.\n")
         }
     }
 
-    data class PmkidEntry(
-        val pmkidHex: String,
-        val apMacHex: String,
-        val clientMacHex: String,
-        val essidHex: String,
-        val essidBytes: ByteArray,
-        val essidLabel: String
-    )
-
-    fun parseWpa01Line(line: String): PmkidEntry {
-        val parts = line.trim().split("*")
-        require(parts.size >= 6 && parts[0] == "WPA" && parts[1] == "01") {
-            "Wymagany format: WPA*01*<PMKID>*<AP_MAC>*<CLIENT_MAC>*<ESSID_HEX>"
+    fun scanFirmwareBytes(bytes: ByteArray, label: String): String {
+        if (bytes.isEmpty()) return "BLAD: Pusty plik binarny."
+        val asciiStrings = extractAsciiStrings(bytes, 4)
+        val utf16Strings = extractUtf16LeStrings(bytes, 4)
+        val combined = asciiStrings + utf16Strings
+        val patterns = listOf(
+            "AWS_KEY" to Regex("AKIA[0-9A-Z]{16}"),
+            "GOOGLE_API" to Regex("Alza[0-9A-Za-z_-]{35}"),
+            "STRIPE_KEY" to Regex("(sk_live|sk_test)[0-9A-Za-z_]{8,}"),
+            "PRIVATE_KEY" to Regex("-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
+            "CREDENTIAL_ASSIGN" to Regex("(password|pwd|passwd)\\s*=\\s*[^\\s\"';]+", RegexOption.IGNORE_CASE),
+            "JWT" to Regex("eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{4,}")
+        )
+        val findings = mutableListOf<String>()
+        for (str in combined) {
+            for ((kind, rx) in patterns) {
+                for (m in rx.findAll(str)) {
+                    val raw = m.value
+                    val masked = if (raw.length >= 4) raw.take(4) + "*".repeat(minOf(12, raw.length - 4)) else "****"
+                    val offset = bytes.indexOfSubarray(raw.toByteArray(StandardCharsets.UTF_8))
+                    findings.add("$kind @ offset=$offset -> $masked")
+                }
+            }
+            if (str.length > 16 && shannonEntropy(str) > 4.0) {
+                val masked = str.take(4) + "*".repeat(10)
+                val offset = bytes.indexOfSubarray(str.toByteArray(StandardCharsets.UTF_8))
+                findings.add("HIGH_ENTROPY(${String.format(Locale.US, "%.2f", shannonEntropy(str))}) @ offset=$offset -> $masked")
+            }
         }
-        val pmkid = parts[2].trim().lowercase()
-        val apMac = parts[3].trim().lowercase()
-        val clientMac = parts[4].trim().lowercase()
-        val essidHex = parts[5].trim().lowercase()
-
-        require(pmkid.length == 32 && pmkid.matches(Regex("^[0-9a-f]{32}$"))) { "PMKID musi mieć 32 znaki hex." }
-        require(apMac.length == 12 && apMac.matches(Regex("^[0-9a-f]{12}$"))) { "AP_MAC musi mieć 12 znaków hex." }
-        require(clientMac.length == 12 && clientMac.matches(Regex("^[0-9a-f]{12}$"))) { "CLIENT_MAC musi mieć 12 znaków hex." }
-        require(essidHex.isNotEmpty() && essidHex.length % 2 == 0 && essidHex.matches(Regex("^[0-9a-f]+$"))) {
-            "ESSID_HEX musi być poprawnym ciągiem hex."
+        val hexStrip = bytes.take(64).joinToString(" ") { String.format(Locale.US, "%02X", it.toInt() and 0xFF) }
+        return buildString {
+            append("=== FIRMWARE SECRET LOOTER ===\n")
+            append("Plik: $label (${bytes.size} B) | ASCII=${asciiStrings.size}, UTF16LE=${utf16Strings.size}\n")
+            append("HEX[0..63]: $hexStrip\n")
+            append("Znaleziska (${findings.size}):\n")
+            if (findings.isEmpty()) {
+                append("Brak dopasowan sekretow (stan pusty / czysty).\n")
+            } else {
+                findings.take(40).forEach { append("  * $it\n") }
+            }
+            append("Obrona: Nie umieszczaj poswiadczen na sztywno; uzywaj secure element lub sekretow per-device.\n")
         }
-
-        val essidBytes = hexToBytes(essidHex)
-        val essidLabel = String(essidBytes, StandardCharsets.UTF_8)
-        return PmkidEntry(pmkid, apMac, clientMac, essidHex, essidBytes, essidLabel)
     }
 
-    fun computePmkid(passphrase: String, entry: PmkidEntry): String {
-        val spec = PBEKeySpec(passphrase.toCharArray(), entry.essidBytes, 4096, 256)
+    fun buildKeystrokeVbs(typeLine: String, delayMs: Int, specialKey: String): String {
+        val safeDelay = delayMs.coerceIn(50, 60000)
+        val safeText = typeLine.replace("\"", "\"\"")
+        val keyCmd = when (specialKey.uppercase(Locale.ROOT)) {
+            "ENTER" -> "WshShell.SendKeys \"{ENTER}\""
+            "TAB" -> "WshShell.SendKeys \"{TAB}\""
+            "WIN+R" -> "WshShell.SendKeys \"^{ESC}\""
+            "CTRL+C" -> "WshShell.SendKeys \"^c\""
+            "CTRL+V" -> "WshShell.SendKeys \"^v\""
+            "CTRL+A" -> "WshShell.SendKeys \"^a\""
+            else -> "WshShell.SendKeys \"{ENTER}\""
+        }
+        return buildString {
+            append("' ==== LAB ONLY - authorised testing on your own machine ====\n")
+            append("WScript.Echo \"LAB ONLY\"\n")
+            append("Set WshShell = CreateObject(\"WScript.Shell\")\n")
+            append("WScript.Sleep $safeDelay\n")
+            append("WshShell.SendKeys \"$safeText\"\n")
+            append("WScript.Sleep $safeDelay\n")
+            append("$keyCmd\n")
+            append("' Obrona: Wylacz Windows Script Host, blokuj .vbs, stosuj AppLocker/WDAC oraz zasady HID przy blokadzie ekranu.\n")
+        }
+    }
+
+    fun crackPmkid22000(lineInput: String, owned: Boolean, customWordsRaw: String): String {
+        if (!owned) return "BLAD: Wymagane potwierdzenie 'I own this network'."
+        val parts = lineInput.trim().split("*")
+        if (parts.size < 6 || !parts[0].equals("WPA", ignoreCase = true) || parts[1] != "01") {
+            return "BLAD: Niepoprawny format 22000. Oczekiwano: WPA*01*<pmkid_hex>*<ap_mac_hex>*<sta_mac_hex>*<essid_hex>***"
+        }
+        val targetPmkid = hexToBytes(parts[2])
+        val apMac = hexToBytes(parts[3])
+        val staMac = hexToBytes(parts[4])
+        val essidBytes = hexToBytes(parts[5])
+        if (targetPmkid.size != 16 || apMac.size != 6 || staMac.size != 6 || essidBytes.isEmpty()) {
+            return "BLAD: Nieprawidlowe dlugosci pol PMKID (16B), AP MAC (6B), STA MAC (6B) lub ESSID."
+        }
+        val essidName = String(essidBytes, StandardCharsets.UTF_8)
+        val custom = customWordsRaw.split(Regex("[\\r\\n,]+")).map { it.trim() }.filter { it.length in 8..63 }
+        val wordlist = (custom + COMMON_WORDS.filter { it.length in 8..63 }).distinct()
+        val pmkNamePrefix = "PMK Name".toByteArray(StandardCharsets.US_ASCII)
+        val msg = pmkNamePrefix + apMac + staMac
+        var attempts = 0
+        for (pass in wordlist) {
+            attempts++
+            val pmk = pbkdf2Sha1(pass, essidBytes, 4096, 256)
+            val cand = hmacSha1(pmk, msg).copyOf(16)
+            if (cand.contentEquals(targetPmkid)) {
+                return "=== PMKID SNATCHER ===\nAUTHORIZED TESTING - YOUR OWN NETWORK ONLY\nCapture the PMKID from your own router with a monitor-mode adapter and hcxdumptool, then paste it here to crack it.\nPASSWORD CRACKED: $pass\nESSID: $essidName\nProby: $attempts\nObrona: Uzywaj dlugiego losowego hasla WPA2 lub WPA3."
+            }
+        }
+        return "=== PMKID SNATCHER ===\nAUTHORIZED TESTING - YOUR OWN NETWORK ONLY\nCapture the PMKID from your own router with a monitor-mode adapter and hcxdumptool, then paste it here to crack it.\npassword not in wordlist (proby: $attempts, ESSID: $essidName)\nObrona: Uzywaj dlugiego losowego hasla WPA2 lub WPA3."
+    }
+
+    private fun digestHex(algo: String, input: String): String {
+        val md = MessageDigest.getInstance(algo)
+        val out = md.digest(input.toByteArray(StandardCharsets.UTF_8))
+        return out.joinToString("") { String.format(Locale.US, "%02x", it.toInt() and 0xFF) }
+    }
+
+    private fun pbkdf2Sha1(password: String, salt: ByteArray, iterations: Int, bits: Int): ByteArray {
+        val spec = PBEKeySpec(password.toCharArray(), salt, iterations, bits)
         val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1")
-        val pmk = skf.generateSecret(spec).encoded
-
-        val mac = Mac.getInstance("HmacSHA1").apply {
-            init(SecretKeySpec(pmk, "HmacSHA1"))
-        }
-        val msg = "PMK Name".toByteArray(StandardCharsets.US_ASCII) +
-            hexToBytes(entry.apMacHex) +
-            hexToBytes(entry.clientMacHex)
-        val digest = mac.doFinal(msg)
-        return digest.copyOfRange(0, 16).joinToString("") { "%02x".format(it) }
+        return skf.generateSecret(spec).encoded
     }
 
-    fun auditPmkid(wpa01Line: String, customPassphrasesText: String = ""): String {
-        val entry = parseWpa01Line(wpa01Line)
-        val candidates = buildList {
-            if (customPassphrasesText.isNotBlank()) {
-                customPassphrasesText.split(Regex("[\\r\\n,]+"))
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .forEach { add(it) }
-            }
-            addAll(defaultWordlist)
-        }.distinct()
-
-        val startNs = System.nanoTime()
-        var attempts = 0
-        var matched: String? = null
-
-        for (secret in candidates) {
-            attempts++
-            val calc = computePmkid(secret, entry)
-            if (calc == entry.pmkidHex) {
-                matched = secret
-                break
-            }
-        }
-
-        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
-        return buildString {
-            appendLine("=== PMKID AUDIT REPORT ===")
-            appendLine("ESSID: ${entry.essidLabel} (${entry.essidHex})")
-            appendLine("AP MAC: ${entry.apMacHex} | Client MAC: ${entry.clientMacHex}")
-            appendLine("Docelowy PMKID: ${entry.pmkidHex}")
-            appendLine("Status: ${if (matched != null) "MATCHED" else "NO_MATCH"}")
-            if (matched != null) {
-                appendLine("Dopasowane hasło: $matched")
-            }
-            appendLine("Liczba prób: $attempts")
-            appendLine("Czas: ${"%.2f".format(elapsedMs)} ms")
-        }
+    private fun hmacSha1(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA1")
+        mac.init(SecretKeySpec(key, "HmacSHA1"))
+        return mac.doFinal(data)
     }
 
     private fun hexToBytes(hex: String): ByteArray {
-        val out = ByteArray(hex.length / 2)
-        var i = 0
-        while (i < hex.length) {
-            out[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
-            i += 2
+        val clean = hex.trim()
+        if (clean.length % 2 != 0 || !clean.matches(Regex("^[0-9a-fA-F]+$"))) return ByteArray(0)
+        return ByteArray(clean.length / 2) { i ->
+            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
-        return out
     }
 
-    private fun readStreamSafe(stream: InputStream?, maxBytes: Int): String {
-        if (stream == null) return ""
-        return stream.use { input ->
-            BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).use { reader ->
-                val sb = StringBuilder()
-                val buf = CharArray(1024)
-                var total = 0
-                while (total < maxBytes) {
-                    val read = reader.read(buf, 0, minOf(buf.size, maxBytes - total))
-                    if (read <= 0) break
-                    sb.append(buf, 0, read)
-                    total += read
-                }
-                sb.toString()
+    private fun extractAsciiStrings(bytes: ByteArray, minLen: Int): List<String> {
+        val res = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            if (v in 32..126) {
+                sb.append(v.toChar())
+            } else {
+                if (sb.length >= minLen) res.add(sb.toString())
+                sb.setLength(0)
             }
+        }
+        if (sb.length >= minLen) res.add(sb.toString())
+        return res
+    }
+
+    private fun extractUtf16LeStrings(bytes: ByteArray, minLen: Int): List<String> {
+        val res = mutableListOf<String>()
+        val sb = StringBuilder()
+        var i = 0
+        while (i + 1 < bytes.size) {
+            val lo = bytes[i].toInt() and 0xFF
+            val hi = bytes[i + 1].toInt() and 0xFF
+            if (hi == 0 && lo in 32..126) {
+                sb.append(lo.toChar())
+            } else {
+                if (sb.length >= minLen) res.add(sb.toString())
+                sb.setLength(0)
+            }
+            i += 2
+        }
+        if (sb.length >= minLen) res.add(sb.toString())
+        return res
+    }
+
+    private fun shannonEntropy(text: String): Double {
+        if (text.isEmpty()) return 0.0
+        val counts = HashMap<Char, Int>()
+        for (c in text) counts[c] = (counts[c] ?: 0) + 1
+        val len = text.length.toDouble()
+        var ent = 0.0
+        for (cnt in counts.values) {
+            val p = cnt.toDouble() / len
+            ent -= p * (ln(p) / ln(2.0))
+        }
+        return ent
+    }
+
+    private fun ByteArray.indexOfSubarray(needle: ByteArray): Int {
+        if (needle.isEmpty() || needle.size > this.size) return -1
+        for (i in 0..(this.size - needle.size)) {
+            var ok = true
+            for (j in needle.indices) {
+                if (this[i + j] != needle[j]) {
+                    ok = false
+                    break
+                }
+            }
+            if (ok) return i
+        }
+        return -1
+    }
+
+    private data class HttpResult(val code: Int, val body: String)
+
+    private fun httpGet(urlStr: String): HttpResult? {
+        return try {
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 3500
+                readTimeout = 3500
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "OceanAuditSuite/1.0")
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            HttpResult(code, body)
+        } catch (_: Exception) {
+            null
         }
     }
 }

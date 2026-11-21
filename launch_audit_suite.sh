@@ -6,7 +6,7 @@ DIST_APK="${PROJECT_DIR}/dist/app-debug.apk"
 DOWNLOAD_APK="/sdcard/Download/OceanAuditSuite.apk"
 PKG_NAME="com.oceansuite.audit"
 ACTIVITY_NAME="com.oceansuite.audit/.MainActivity"
-EXPECTED_SHA="${EXPECTED_SHA:-ae8ddce3251d15fff40bd7fe0041ca36940e50da4ab5b6e1eda26f479ff6a66a}"
+EXPECTED_SHA="${EXPECTED_SHA:-107a7e58313c0ef4a3db4c02b6ec01db2a4e43ec2a09784ebee2aab1ecc89344}"
 
 for apk in "$DIST_APK" "$DOWNLOAD_APK"; do
   [ -f "$apk" ] || { echo "BŁĄD: Brak pliku $apk" >&2; exit 1; }

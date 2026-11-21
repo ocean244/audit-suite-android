@@ -15,7 +15,7 @@ DEFAULT_ADB_TARGET="192.168.1.157:42079"
 GH_OWNER="ocean244"
 GH_REPO="audit-suite-android"
 TOKEN_FILE="${HOME}/.gh_token"
-EXPECTED_SHA="${EXPECTED_SHA:-ae8ddce3251d15fff40bd7fe0041ca36940e50da4ab5b6e1eda26f479ff6a66a}"
+EXPECTED_SHA="${EXPECTED_SHA:-107a7e58313c0ef4a3db4c02b6ec01db2a4e43ec2a09784ebee2aab1ecc89344}"
 
 resolve_gh_token() {
   if [ -n "${GH_TOKEN:-}" ]; then

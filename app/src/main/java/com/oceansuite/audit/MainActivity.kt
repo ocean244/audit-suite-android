@@ -1,26 +1,28 @@
 package com.oceansuite.audit
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,231 +31,274 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ClipboardManager
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
-enum class ToolTab(val label: String) {
-    BUCKET("Bucket"),
-    DOPPELGANGER("Doppelganger"),
-    HASH("Hash"),
-    PMKID("PMKID")
-}
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    AuditSuiteScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0A0C0E)) {
+                    OceanAuditSuiteScreen()
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AuditSuiteScreen() {
+fun OceanAuditSuiteScreen() {
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val clipboard: ClipboardManager = LocalClipboardManager.current
+    val tabs = listOf("Bucket", "Doppelganger", "Hash", "Surface", "Firmware", "Keystroke", "PMKID")
+    var activeTab by remember { mutableStateOf("Hash") }
 
-    var selectedTab by remember { mutableStateOf(ToolTab.BUCKET) }
-    var running by remember { mutableStateOf(false) }
-    var outputText by remember { mutableStateOf("Gotowy do pracy. Wybierz moduł i uruchom analizę.") }
+    var brandInput by remember { mutableStateOf("") }
+    var bucketOwned by remember { mutableStateOf(false) }
 
-    var brandInput by remember { mutableStateOf("example-brand") }
-    var wordsInput by remember { mutableStateOf("backup,assets,cdn") }
+    var domainInput by remember { mutableStateOf("") }
 
-    var domainInput by remember { mutableStateOf("example.com") }
-
-    var digestInput by remember { mutableStateOf("5f4dcc3b5aa765d61d8327deb882cf99") }
+    var hashInput by remember { mutableStateOf("5f4dcc3b5aa765d61d8327deb882cf99") }
     var candidatesInput by remember { mutableStateOf("password\nadmin\n123456") }
+    var hashOwned by remember { mutableStateOf(true) }
 
-    var pmkidInput by remember {
-        mutableStateOf("WPA*01*00000000000000000000000000000000*112233445566*aabbccddeeff*74657374")
-    }
-    var pmkidPassInput by remember { mutableStateOf("password\n12345678") }
+    var surfaceDomain by remember { mutableStateOf("") }
 
-    Scaffold { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    var firmwarePath by remember { mutableStateOf("/sdcard/OceanAuditSuite/OceanAuditSuite.apk") }
+
+    var vbsLine by remember { mutableStateOf("echo LAB_ONLY_CHECK") }
+    var vbsDelay by remember { mutableStateOf("500") }
+    var vbsKey by remember { mutableStateOf("ENTER") }
+
+    var pmkidLine by remember { mutableStateOf("") }
+    var pmkidOwned by remember { mutableStateOf(false) }
+
+    var outputText by remember { mutableStateOf("Gotowy do pracy.") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("Ocean Audit Suite", color = Color(0xFF00E676), style = MaterialTheme.typography.headlineSmall)
+
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(
-                text = "Ocean Audit Suite",
-                style = MaterialTheme.typography.headlineSmall
-            )
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ToolTab.entries.forEach { tab ->
-                    FilterChip(
-                        selected = selectedTab == tab,
-                        onClick = { if (!running) selectedTab = tab },
-                        label = { Text(tab.label) }
-                    )
-                }
-            }
-
-            when (selectedTab) {
-                ToolTab.BUCKET -> {
-                    OutlinedTextField(
-                        value = brandInput,
-                        onValueChange = { brandInput = it },
-                        label = { Text("Nazwa marki lub domeny") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = wordsInput,
-                        onValueChange = { wordsInput = it },
-                        label = { Text("Słowa dodatkowe (oddzielone przecinkami)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Button(
-                        enabled = !running,
-                        onClick = {
-                            running = true
-                            scope.launch {
-                                outputText = runCatching {
-                                    AuditEngine.scanBuckets(brandInput, wordsInput)
-                                }.getOrElse { "BŁĄD: ${it.message}" }
-                                running = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Skanuj zasoby S3 / GCS")
-                    }
-                }
-
-                ToolTab.DOPPELGANGER -> {
-                    OutlinedTextField(
-                        value = domainInput,
-                        onValueChange = { domainInput = it },
-                        label = { Text("Domena bazowa (np. example.com)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Button(
-                        enabled = !running,
-                        onClick = {
-                            running = true
-                            scope.launch {
-                                outputText = runCatching {
-                                    AuditEngine.auditDomains(domainInput, limit = 60)
-                                }.getOrElse { "BŁĄD: ${it.message}" }
-                                running = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Sprawdź warianty domeny (DNS A/MX)")
-                    }
-                }
-
-                ToolTab.HASH -> {
-                    OutlinedTextField(
-                        value = digestInput,
-                        onValueChange = { digestInput = it },
-                        label = { Text("Skrót HEX (MD5 / SHA1 / SHA256)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = candidatesInput,
-                        onValueChange = { candidatesInput = it },
-                        label = { Text("Kandydaci haseł (po jednym w linii lub po przecinku)") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 90.dp)
-                    )
-                    Button(
-                        enabled = !running,
-                        onClick = {
-                            running = true
-                            outputText = runCatching {
-                                AuditEngine.crackHash(digestInput, candidatesInput)
-                            }.getOrElse { "BŁĄD: ${it.message}" }
-                            running = false
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Weryfikuj skrót")
-                    }
-                }
-
-                ToolTab.PMKID -> {
-                    OutlinedTextField(
-                        value = pmkidInput,
-                        onValueChange = { pmkidInput = it },
-                        label = { Text("Wpis WPA*01*PMKID*AP_MAC*CLIENT_MAC*ESSID_HEX") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = pmkidPassInput,
-                        onValueChange = { pmkidPassInput = it },
-                        label = { Text("Kandydaci haseł (po jednym w linii lub po przecinku)") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 90.dp)
-                    )
-                    Button(
-                        enabled = !running,
-                        onClick = {
-                            running = true
-                            scope.launch {
-                                outputText = runCatching {
-                                    AuditEngine.auditPmkid(pmkidInput, pmkidPassInput)
-                                }.getOrElse { "BŁĄD: ${it.message}" }
-                                running = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Oblicz i sprawdź PMKID")
-                    }
-                }
-            }
-
-            if (running) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-
-            Button(
-                onClick = { clipboard.setText(AnnotatedString(outputText)) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Kopiuj wynik do schowka")
-            }
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = outputText,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp)
+            tabs.forEach { tab ->
+                FilterChip(
+                    selected = activeTab == tab,
+                    onClick = { activeTab = tab },
+                    label = { Text(tab) }
                 )
             }
         }
+
+        when (activeTab) {
+            "Bucket" -> {
+                OutlinedTextField(
+                    value = brandInput,
+                    onValueChange = { brandInput = it },
+                    label = { Text("Własna marka lub bucket") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = bucketOwned, onCheckedChange = { bucketOwned = it })
+                    Text("I own this bucket / brand", color = Color.White)
+                }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = "Skanowanie S3/GCS..."
+                            outputText = withContext(Dispatchers.IO) { AuditEngine.runBucketBuster(brandInput, bucketOwned) }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("RAID", color = Color.White) }
+            }
+
+            "Doppelganger" -> {
+                OutlinedTextField(
+                    value = domainInput,
+                    onValueChange = { domainInput = it },
+                    label = { Text("Własna domena") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = "Sprawdzanie DNS A/MX..."
+                            outputText = withContext(Dispatchers.IO) { AuditEngine.runDoppelganger(domainInput) }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Skanuj radar domen") }
+            }
+
+            "Hash" -> {
+                val detected = when (hashInput.trim().length) {
+                    32 -> "MD5"
+                    40 -> "SHA1"
+                    64 -> "SHA256"
+                    else -> "Nieznany (${hashInput.trim().length})"
+                }
+                OutlinedTextField(
+                    value = hashInput,
+                    onValueChange = { hashInput = it },
+                    label = { Text("Skrót HEX (MD5 / SHA1 / SHA256) — wykryto: $detected") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = candidatesInput,
+                    onValueChange = { candidatesInput = it },
+                    label = { Text("Kandydaci haseł (po jednym w linii lub po przecinku)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = hashOwned, onCheckedChange = { hashOwned = it })
+                    Text("I own this hash", color = Color.White)
+                }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = withContext(Dispatchers.Default) {
+                                AuditEngine.crackHash(hashInput, candidatesInput, hashOwned)
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("CRACK", color = Color.White) }
+            }
+
+            "Surface" -> {
+                OutlinedTextField(
+                    value = surfaceDomain,
+                    onValueChange = { surfaceDomain = it },
+                    label = { Text("Własna domena (Panels / Logs / Keys)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = "Skanowanie paneli, logów i kluczy..."
+                            outputText = withContext(Dispatchers.IO) { AuditEngine.runAttackSurface(surfaceDomain) }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Skanuj Attack Surface") }
+            }
+
+            "Firmware" -> {
+                OutlinedTextField(
+                    value = firmwarePath,
+                    onValueChange = { firmwarePath = it },
+                    label = { Text("Ścieżka pliku binarnego/firmware") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = withContext(Dispatchers.IO) {
+                                val f = File(firmwarePath.trim())
+                                if (!f.exists() || !f.isFile) "BŁĄD: Nie znaleziono pliku ${firmwarePath.trim()}"
+                                else AuditEngine.scanFirmwareBytes(f.readBytes(), f.name)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Analizuj binarny plik") }
+            }
+
+            "Keystroke" -> {
+                OutlinedTextField(
+                    value = vbsLine,
+                    onValueChange = { vbsLine = it },
+                    label = { Text("TYPE blok (linia tekstu)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = vbsDelay,
+                    onValueChange = { vbsDelay = it },
+                    label = { Text("DELAY blok (ms)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = vbsKey,
+                    onValueChange = { vbsKey = it },
+                    label = { Text("Klucz specjalny (ENTER, TAB, WIN+R, CTRL+C)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = withContext(Dispatchers.IO) {
+                                val delayVal = vbsDelay.trim().toIntOrNull() ?: 500
+                                val script = AuditEngine.buildKeystrokeVbs(vbsLine, delayVal, vbsKey)
+                                val outFile = File("/sdcard/OceanAuditSuite/keystroke_forge_lab_only.vbs")
+                                outFile.parentFile?.mkdirs()
+                                outFile.writeText(script)
+                                "Zapisano ${outFile.absolutePath}\n\n$script"
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("FORGE.VBS", color = Color.White) }
+            }
+
+            "PMKID" -> {
+                OutlinedTextField(
+                    value = pmkidLine,
+                    onValueChange = { pmkidLine = it },
+                    label = { Text("Linia 22000 (WPA*01*...)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = pmkidOwned, onCheckedChange = { pmkidOwned = it })
+                    Text("I own this network", color = Color.White)
+                }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            outputText = withContext(Dispatchers.Default) {
+                                AuditEngine.crackPmkid22000(pmkidLine, pmkidOwned, candidatesInput)
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("SNATCH", color = Color.White) }
+            }
+        }
+
+        Button(
+            onClick = {
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("OceanAuditSuite", outputText))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Kopiuj wynik do schowka") }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = outputText,
+            color = Color(0xFFE0F2F1),
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
