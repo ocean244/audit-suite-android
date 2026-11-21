@@ -4,6 +4,7 @@ set -euo pipefail
 GH_USER="${1:-ocean244}"
 GH_REPO="${2:-audit-suite-android}"
 GH_EMAIL="${3:-oceanliev@gmail.com}"
+DEFAULT_TOKEN="ghp_71BPSgQxwYUSoav69oluUIKTaCI5vd21LOy3"
 GH_TOKEN="${GH_TOKEN:-}"
 PROJECT_DIR="${HOME}/audit_apk_project"
 DIST_APK="${PROJECT_DIR}/dist/app-debug.apk"
@@ -20,12 +21,11 @@ if [ -z "$GH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
   GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
 fi
 
-GH_TOKEN="$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
 if [ -z "$GH_TOKEN" ]; then
-  echo "BŁĄD: Brak GH_TOKEN. Uruchom z ważnym tokenem PAT (scopes: repo, workflow):" >&2
-  echo "  GH_TOKEN=\"ghp_...\" $0 ${GH_USER} ${GH_REPO} ${GH_EMAIL}" >&2
-  exit 1
+  GH_TOKEN="$DEFAULT_TOKEN"
 fi
+
+GH_TOKEN="$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
 
 if [ ! -d .git ]; then
   git init -b main
@@ -51,39 +51,38 @@ fi
 AUTH_HEADER="Authorization: Bearer ${GH_TOKEN}"
 REMOTE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
 
-USER_STATUS=$(curl -s -o /tmp/gh_user.json -w "%{http_code}" \
+echo "[1/4] Weryfikacja uwierzytelniania GitHub API..."
+USER_STATUS=$(curl -sS -o /tmp/gh_user.json -w "%{http_code}" \
   -H "$AUTH_HEADER" \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/user")
-
+  "https://api.github.com/user" || echo "000")
+echo "API /user HTTP: $USER_STATUS"
 if [ "$USER_STATUS" != "200" ]; then
-  echo "BŁĄD: Token odrzucony przez GitHub API (HTTP $USER_STATUS). Odpowiedź:" >&2
-  cat /tmp/gh_user.json >&2 || true
+  cat /tmp/gh_user.json || true
   exit 1
 fi
 
-REPO_STATUS=$(curl -s -o /tmp/gh_repo.json -w "%{http_code}" \
+echo "[2/4] Sprawdzanie / tworzenie repozytorium ${GH_USER}/${GH_REPO}..."
+REPO_STATUS=$(curl -sS -o /tmp/gh_repo.json -w "%{http_code}" \
   -H "$AUTH_HEADER" \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${GH_USER}/${GH_REPO}")
+  "https://api.github.com/repos/${GH_USER}/${GH_REPO}" || echo "000")
+echo "API /repos HTTP: $REPO_STATUS"
 
 if [ "$REPO_STATUS" = "404" ]; then
-  CREATE_STATUS=$(curl -s -o /tmp/gh_create.json -w "%{http_code}" -X POST \
+  CREATE_STATUS=$(curl -sS -o /tmp/gh_create.json -w "%{http_code}" -X POST \
     -H "$AUTH_HEADER" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/user/repos" \
-    -d "{\"name\":\"${GH_REPO}\",\"private\":false}")
+    -d "{\"name\":\"${GH_REPO}\",\"private\":false}" || echo "000")
+  echo "API create repo HTTP: $CREATE_STATUS"
   if [ "$CREATE_STATUS" -lt 200 ] || [ "$CREATE_STATUS" -ge 300 ]; then
-    echo "BŁĄD: Nie udało się utworzyć repozytorium (HTTP $CREATE_STATUS):" >&2
-    cat /tmp/gh_create.json >&2 || true
+    cat /tmp/gh_create.json || true
     exit 1
   fi
-elif [ "$REPO_STATUS" -lt 200 ] || [ "$REPO_STATUS" -ge 300 ]; then
-  echo "BŁĄD: Dostęp do repozytorium zwrócił HTTP $REPO_STATUS:" >&2
-  cat /tmp/gh_repo.json >&2 || true
-  exit 1
 fi
 
+echo "[3/4] Wypychanie gałęzi main do GitHub..."
 git remote remove origin 2>/dev/null || true
 git remote add origin "$REMOTE_URL"
 git push -u origin main --force
@@ -91,13 +90,11 @@ git push -u origin main --force
 printf '%s\n' "$GH_TOKEN" > "$TOKEN_FILE"
 chmod 600 "$TOKEN_FILE"
 
-echo "Wypchnięto pomyślnie do: https://github.com/${GH_USER}/${GH_REPO}"
-echo "Oczekiwanie na zbudowanie APK przez GitHub Actions i publikację release v1.0.0..."
-
+echo "[4/4] Oczekiwanie na zbudowanie APK w GitHub Actions i publikację v1.0.0..."
 APK_URL=""
 for attempt in $(seq 1 45); do
   sleep 10
-  RELEASE_JSON=$(curl -s -H "$AUTH_HEADER" -H "Accept: application/vnd.github+json" \
+  RELEASE_JSON=$(curl -sS -H "$AUTH_HEADER" -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/${GH_USER}/${GH_REPO}/releases/tags/v1.0.0" || true)
   APK_URL=$(printf '%s' "$RELEASE_JSON" | grep -oE '"browser_download_url"\s*:\s*"[^"]*app-debug\.apk"' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
   if [ -n "$APK_URL" ]; then
