@@ -92,7 +92,7 @@ printf '%s\n' "$GH_TOKEN" > "$TOKEN_FILE"
 chmod 600 "$TOKEN_FILE"
 
 echo "Wypchnięto pomyślnie do: https://github.com/${GH_USER}/${GH_REPO}"
-echo "Oczekiwanie na zbudowanie APK w GitHub Actions i publikację v1.0.0..."
+echo "Oczekiwanie na zbudowanie APK przez GitHub Actions i publikację release v1.0.0..."
 
 APK_URL=""
 for attempt in $(seq 1 45); do
