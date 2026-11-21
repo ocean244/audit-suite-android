@@ -4,16 +4,32 @@ set -euo pipefail
 GH_USER="${1:-ocean244}"
 GH_REPO="${2:-audit-suite-android}"
 GH_EMAIL="${3:-oceanliev@gmail.com}"
-GH_PASS="${GH_PASS:-niewiem244}"
 GH_TOKEN="${GH_TOKEN:-}"
 PROJECT_DIR="${HOME}/audit_apk_project"
 DIST_APK="${PROJECT_DIR}/dist/app-debug.apk"
 DOWNLOAD_APK="/sdcard/Download/OceanAuditSuite.apk"
+TOKEN_FILE="${HOME}/.gh_token"
 
 cd "$PROJECT_DIR"
 
 if [ ! -d /sdcard/Download ] && command -v termux-setup-storage >/dev/null 2>&1; then
   termux-setup-storage || true
+fi
+
+if [ -z "$GH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
+  GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
+fi
+
+if [ -z "$GH_TOKEN" ]; then
+  echo -n "Podaj ważny GitHub PAT (scopes: repo, workflow): "
+  read -rs GH_TOKEN
+  echo ""
+fi
+
+GH_TOKEN="$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
+if [ -z "$GH_TOKEN" ]; then
+  echo "BŁĄD: Pusty token." >&2
+  exit 1
 fi
 
 if [ ! -d .git ]; then
@@ -37,42 +53,46 @@ if ! git diff --cached --quiet; then
   git commit -m "Deploy Ocean Audit Suite APK pipeline"
 fi
 
-if [ -n "$GH_TOKEN" ]; then
-  AUTH_HEADER="Authorization: Bearer ${GH_TOKEN}"
-  REMOTE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
-else
-  AUTH_HEADER="Authorization: Basic $(printf '%s:%s' "$GH_USER" "$GH_PASS" | base64 | tr -d '\n')"
-  REMOTE_URL="https://${GH_USER}:${GH_PASS}@github.com/${GH_USER}/${GH_REPO}.git"
-fi
+AUTH_HEADER="Authorization: Bearer ${GH_TOKEN}"
+REMOTE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
 
-REPO_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+USER_STATUS=$(curl -s -o /tmp/gh_user.json -w "%{http_code}" \
   -H "$AUTH_HEADER" \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${GH_USER}/${GH_REPO}" || true)
+  "https://api.github.com/user")
+
+if [ "$USER_STATUS" != "200" ]; then
+  echo "BŁĄD: Token odrzucony przez GitHub API (HTTP $USER_STATUS). Wygeneruj nowy Classic PAT z scopes: repo, workflow." >&2
+  cat /tmp/gh_user.json >&2 || true
+  exit 1
+fi
+
+REPO_STATUS=$(curl -s -o /tmp/gh_repo.json -w "%{http_code}" \
+  -H "$AUTH_HEADER" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/${GH_USER}/${GH_REPO}")
 
 if [ "$REPO_STATUS" = "404" ]; then
-  curl -s -o /tmp/gh_create.json -X POST \
+  CREATE_STATUS=$(curl -s -o /tmp/gh_create.json -w "%{http_code}" -X POST \
     -H "$AUTH_HEADER" \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/user/repos" \
-    -d "{\"name\":\"${GH_REPO}\",\"private\":false}" >/dev/null || true
+    -d "{\"name\":\"${GH_REPO}\",\"private\":false}")
+  if [ "$CREATE_STATUS" -lt 200 ] || [ "$CREATE_STATUS" -ge 300 ]; then
+    echo "BŁĄD: Nie udało się utworzyć repozytorium (HTTP $CREATE_STATUS):" >&2
+    cat /tmp/gh_create.json >&2 || true
+    exit 1
+  fi
 fi
 
 git remote remove origin 2>/dev/null || true
 git remote add origin "$REMOTE_URL"
-git push -u origin main --force || {
-  echo "GitHub odrzucił uwierzytelnianie hasłem — podaj token PAT (ghp_...), aby dokończyć push:"
-  read -r INPUT_TOKEN
-  if [ -n "$INPUT_TOKEN" ]; then
-    AUTH_HEADER="Authorization: Bearer ${INPUT_TOKEN}"
-    git remote set-url origin "https://${GH_USER}:${INPUT_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
-    git push -u origin main --force
-  else
-    exit 1
-  fi
-}
+git push -u origin main --force
 
-echo "Wypchnięto do: https://github.com/${GH_USER}/${GH_REPO}"
+printf '%s\n' "$GH_TOKEN" > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+
+echo "Wypchnięto pomyślnie do: https://github.com/${GH_USER}/${GH_REPO}"
 echo "Oczekiwanie na zbudowanie APK w GitHub Actions i publikację v1.0.0..."
 
 APK_URL=""
