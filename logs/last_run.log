@@ -41,3 +41,11 @@ Starting: Intent { cmp=com.oceansuite.audit/.MainActivity }
 11-21 10:38:21.335  3230  3230 I VRI[MainActivity]@6c8f622: ViewPostIme pointer 0
 11-21 10:38:21.342  3230  3230 I VRI[MainActivity]@6c8f622: call setFrameRateCategory for touch hint category=high hint, reason=touch, vri=VRI[MainActivity]@6c8f622
 [2026-11-21 10:38:21] APP_RUNNING: pkg=com.oceansuite.audit activity=com.oceansuite.audit/.MainActivity pid=3230
+[main de8ecbd] Update Ocean Audit Suite controller v4
+ 4 files changed, 242 insertions(+), 35 deletions(-)
+ create mode 100755 ocean_suite_ctl_v4.sh
+ create mode 100644 state/package_dump.txt
+To https://github.com/ocean244/audit-suite-android.git
+   c664972..de8ecbd  main -> main
+[2026-11-21 10:38:24] GIT_SYNC: head=de8ecbd
+[2026-11-21 10:38:24] COMPLETE: 100%
