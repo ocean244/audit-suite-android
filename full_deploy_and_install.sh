@@ -4,15 +4,15 @@ set -euo pipefail
 GH_USER="${1:-ocean244}"
 GH_REPO="${2:-audit-suite-android}"
 GH_EMAIL="${3:-oceanliev@gmail.com}"
-DEFAULT_TOKEN="ghp_71BPSgQxwYUSoav69oluUIKTaCI5vd21LOy3"
 GH_TOKEN="${GH_TOKEN:-}"
 PROJECT_DIR="${HOME}/audit_apk_project"
 TMP_DIR="${TMPDIR:-${PROJECT_DIR}/.tmp}"
-DIST_APK="${PROJECT_DIR}/dist/app-debug.apk"
+DIST_DIR="${PROJECT_DIR}/dist"
+DIST_APK="${DIST_DIR}/app-debug.apk"
 DOWNLOAD_APK="/sdcard/Download/OceanAuditSuite.apk"
 TOKEN_FILE="${HOME}/.gh_token"
 
-mkdir -p "$TMP_DIR" "$(dirname "$DIST_APK")"
+mkdir -p "$TMP_DIR" "$DIST_DIR"
 cd "$PROJECT_DIR"
 
 if [ ! -d /sdcard/Download ] && command -v termux-setup-storage >/dev/null 2>&1; then
@@ -23,8 +23,8 @@ if [ -z "$GH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
   GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")"
 fi
 
-if [ -z "$GH_TOKEN" ]; then
-  GH_TOKEN="$DEFAULT_TOKEN"
+if [ -z "$GH_TOKEN" ] && command -v gh >/dev/null 2>&1; then
+  GH_TOKEN="$(gh auth token 2>/dev/null || true)"
 fi
 
 GH_TOKEN="$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')"
@@ -51,6 +51,42 @@ if ! git diff --cached --quiet; then
   git commit -m "Deploy Ocean Audit Suite APK pipeline"
 fi
 
+run_local_fallback() {
+  echo "[FALLBACK] Brak ważnego tokenu GitHub (HTTP 401) — uruchamiam lokalną weryfikację i pakowanie projektu..."
+  if [ -x ./gradlew ] && [ -n "${ANDROID_HOME:-}" ] && command -v java >/dev/null 2>&1; then
+    if ./gradlew assembleDebug --no-daemon; then
+      BUILT_APK="app/build/outputs/apk/debug/app-debug.apk"
+      if [ -f "$BUILT_APK" ]; then
+        cp -f "$BUILT_APK" "$DIST_APK"
+        [ -d /sdcard/Download ] && cp -f "$DIST_APK" "$DOWNLOAD_APK" || true
+        echo "Zbudowano lokalnie APK: $DIST_APK ($(wc -c < "$DIST_APK") bajtów)"
+        return 0
+      fi
+    fi
+  fi
+  BUNDLE_TAR="${DIST_DIR}/OceanAuditSuite-source.tar.gz"
+  tar -czf "$BUNDLE_TAR" \
+    --exclude=".git" \
+    --exclude=".gradle" \
+    --exclude="build" \
+    --exclude="app/build" \
+    --exclude=".tmp" \
+    --exclude="dist/*.apk" \
+    .
+  if [ -d /sdcard/Download ]; then
+    cp -f "$BUNDLE_TAR" "/sdcard/Download/OceanAuditSuite-source.tar.gz"
+    echo "Zapisano paczkę źródłową gotową do kompilacji: /sdcard/Download/OceanAuditSuite-source.tar.gz ($(wc -c < "$BUNDLE_TAR") bajtów)"
+  fi
+  echo "Zapisano paczkę: $BUNDLE_TAR ($(wc -c < "$BUNDLE_TAR") bajtów)"
+  echo "Aby dokończyć build APK w GitHub Actions i pobrać app-debug.apk, podaj ważny PAT (scopes: repo, workflow):"
+  echo "  GH_TOKEN=\"ghp_NOWY_TOKEN\" $0 ${GH_USER} ${GH_REPO} ${GH_EMAIL}"
+}
+
+if [ -z "$GH_TOKEN" ]; then
+  run_local_fallback
+  exit 0
+fi
+
 AUTH_HEADER="Authorization: Bearer ${GH_TOKEN}"
 REMOTE_URL="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
 
@@ -61,9 +97,11 @@ USER_STATUS=$(curl -sS -o "$USER_OUT" -w "%{http_code}" \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/user") || USER_STATUS="000"
 echo "API /user HTTP: $USER_STATUS"
+
 if [ "$USER_STATUS" != "200" ]; then
   [ -f "$USER_OUT" ] && cat "$USER_OUT" && echo ""
-  exit 1
+  run_local_fallback
+  exit 0
 fi
 
 echo "[2/4] Sprawdzanie / tworzenie repozytorium ${GH_USER}/${GH_REPO}..."
