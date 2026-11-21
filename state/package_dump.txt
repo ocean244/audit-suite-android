@@ -1,0 +1,4 @@
+    codePath=/data/app/~~O8GpIDzHl6deqlMjHCCXtg==/com.oceansuite.audit-ZUK70w5yOVkU8uDVrhOE0A==
+    versionCode=1 minSdk=26 targetSdk=35
+    versionName=1.0.0
+    lastUpdateTime=2026-11-21 10:38:18
