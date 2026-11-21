@@ -10,7 +10,7 @@ TOKEN_FILE="${HOME}/.gh_token"
 
 cd "$PROJECT_DIR"
 
-EXPECTED_SHA="f1bc6f679321e3bf5991600e0a37f90709286a8c4c642dfe10a28be6ea172d4b"
+EXPECTED_SHA="${EXPECTED_SHA:-ae8ddce3251d15fff40bd7fe0041ca36940e50da4ab5b6e1eda26f479ff6a66a}"
 for target in "$DIST_APK" "$DOWNLOAD_APK"; do
   [ -f "$target" ] || { echo "BŁĄD: Brak pliku $target" >&2; exit 1; }
   ACTUAL_SHA="$(sha256sum "$target" | awk '{print $1}')"

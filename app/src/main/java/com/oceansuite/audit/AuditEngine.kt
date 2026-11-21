@@ -294,7 +294,7 @@ object AuditEngine {
             "Skrót musi składać się wyłącznie ze znaków heksadecymalnych (0-9, a-f)."
         }
         return when (clean.length) {
-            32 -> "MD-5"
+            32 -> "MD5"
             40 -> "SHA-1"
             64 -> "SHA-256"
             else -> throw IllegalArgumentException(

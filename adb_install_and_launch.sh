@@ -8,7 +8,7 @@ PKG_NAME="com.oceansuite.audit"
 ACTIVITY_NAME="com.oceansuite.audit/.MainActivity"
 ADB_TARGET="${ADB_TARGET:-192.168.1.157:42079}"
 TOKEN_FILE="${HOME}/.gh_token"
-EXPECTED_SHA="f1bc6f679321e3bf5991600e0a37f90709286a8c4c642dfe10a28be6ea172d4b"
+EXPECTED_SHA="${EXPECTED_SHA:-ae8ddce3251d15fff40bd7fe0041ca36940e50da4ab5b6e1eda26f479ff6a66a}"
 
 cd "$PROJECT_DIR"
 
