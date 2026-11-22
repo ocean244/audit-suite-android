@@ -2,6 +2,7 @@ package com.oceansuite.audit
 
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
@@ -21,7 +22,22 @@ object AuditEngine {
         "password1", "12345", "123123", "admin123", "root", "toor",
         "pass", "guest", "test", "changeme", "default", "superman",
         "qazwsx", "1234", "1234567", "000000", "666666", "777777",
-        "888888", "999999", "zaq12wsx", "freedom", "starwars", "whatever"
+        "888888", "999999", "zaq12wsx", "freedom", "starwars", "whatever",
+        "polska", "polska123", "qwerty123", "haslo", "haslo123", "administrator",
+        "superuser", "changeme123", "solar", "wifi1234", "internet123", "router123"
+    )
+
+    private val PANEL_PATHS = listOf(
+        "/admin", "/administrator", "/wp-admin", "/login", "/phpmyadmin",
+        "/adminer.php", "/.git/HEAD", "/.env", "/actuator", "/actuator/env",
+        "/debug", "/server-status", "/config", "/swagger", "/manager/html",
+        "/.well-known", "/api", "/api/v1", "/graphql", "/console", "/dashboard",
+        "/cpanel", "/webmail", "/pma", "/dbadmin", "/backup", "/backups",
+        "/old", "/temp", "/tmp", "/test", "/staging", "/dev", "/robots.txt",
+        "/sitemap.xml", "/crossdomain.xml", "/clientaccesspolicy.xml",
+        "/.DS_Store", "/.htaccess", "/.htpasswd", "/web.config", "/config.php",
+        "/settings.php", "/wp-config.php", "/info.php", "/phpinfo.php",
+        "/metrics", "/health", "/status", "/trace", "/heapdump", "/env"
     )
 
     fun bucketPermutations(brandInput: String): List<String> {
@@ -31,7 +47,7 @@ object AuditEngine {
             .replace(Regex("[^a-z0-9-]"), "-")
             .trim('-')
         if (clean.isEmpty()) return emptyList()
-        val suffixes = listOf("", "-assets", "-backups", "-dev", "-media", "-static", "-uploads")
+        val suffixes = listOf("", "-assets", "-backups", "-dev", "-media", "-static", "-uploads", "-prod", "-public")
         return suffixes.map { "${clean}${it}" }.distinct()
     }
 
@@ -42,30 +58,36 @@ object AuditEngine {
         val sb = StringBuilder()
         sb.append("=== BUCKET BUSTER REPORT ===\n")
         sb.append("Marka/Cel: ${brandInput.trim()}\n")
-        sb.append("Permutacje: ${candidates.joinToString(", ")}\n")
+        sb.append("Permutacje (${candidates.size}): ${candidates.joinToString(", ")}\n")
         var publicCount = 0
         for (name in candidates) {
             val s3Url = "https://$name.s3.amazonaws.com/?list-type=2"
             val s3Resp = httpGet(s3Url)
             if (s3Resp != null && s3Resp.code == 200 && s3Resp.body.contains("<Key>")) {
                 publicCount++
-                val keys = Regex("<Key>([^<]+)</Key>").findAll(s3Resp.body).map { it.groupValues[1] }.take(20).toList()
+                val keys = Regex("<Key>([^<]+)</Key>").findAll(s3Resp.body).map { it.groupValues[1] }.take(25).toList()
                 sb.append("[S3 PUBLIC] $name ($s3Url) -> obiektow: ${keys.size}\n")
-                keys.forEach { k -> sb.append("  * $k -> https://$name.s3.amazonaws.com/$k\n") }
+                keys.forEach { k ->
+                    val encKey = URLEncoder.encode(k, StandardCharsets.UTF_8.name()).replace("+", "%20")
+                    sb.append("  * $k -> https://$name.s3.amazonaws.com/$encKey\n")
+                }
             }
             val gcsUrl = "https://storage.googleapis.com/storage/v1/b/$name/o"
             val gcsResp = httpGet(gcsUrl)
             if (gcsResp != null && gcsResp.code == 200 && gcsResp.body.contains("\"name\"")) {
                 publicCount++
-                val objs = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").findAll(gcsResp.body).map { it.groupValues[1] }.take(20).toList()
+                val objs = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").findAll(gcsResp.body).map { it.groupValues[1] }.take(25).toList()
                 sb.append("[GCS PUBLIC] $name ($gcsUrl) -> obiektow: ${objs.size}\n")
-                objs.forEach { o -> sb.append("  * $o -> https://storage.googleapis.com/storage/v1/b/$name/o/${o}\n") }
+                objs.forEach { o ->
+                    val encObj = URLEncoder.encode(o, StandardCharsets.UTF_8.name()).replace("+", "%20")
+                    sb.append("  * $o -> https://storage.googleapis.com/storage/v1/b/$name/o/$encObj\n")
+                }
             }
         }
         if (publicCount == 0) {
-            sb.append("Brak publicznych bucketow dla podanej marki.\n")
+            sb.append("Brak publicznych bucketow z otwartym listingiem dla podanej marki.\n")
         }
-        sb.append("Obrona: Wlacz Block Public Access i wylacz anonimowy listing.\n")
+        sb.append("Obrona: Wlacz Block Public Access (S3) / Uniform Bucket-Level Access (GCS) i wylacz anonimowy listing.\n")
         return sb.toString()
     }
 
@@ -90,10 +112,10 @@ object AuditEngine {
             out.add("${label.removeRange(i, i + 1)}.$tld")
             out.add("${label.substring(0, i + 1)}${label[i]}${label.substring(i + 1)}.$tld")
         }
-        for (altTld in listOf("com", "co", "net", "org", "io")) {
-            out.add("$label.$altTld")
+        for (altTld in listOf("com", "co", "net", "org", "io", "pl", "eu")) {
+            if (altTld != tld) out.add("$label.$altTld")
         }
-        return out.take(36).toList()
+        return out.take(40).toList()
     }
 
     fun runDoppelganger(domainInput: String): String {
@@ -122,8 +144,17 @@ object AuditEngine {
             sb.append("$cand -> $status\n")
         }
         sb.append("Podsumowanie: zarejestrowane=$regCount, z MX=$mxCount, sprawdzone=${candidates.size}\n")
-        sb.append("Obrona: Rejestruj kluczowe warianty, monitoruj logi CT i szkol personel.\n")
+        sb.append("Obrona: Rejestruj kluczowe warianty, wdrazaj DMARC/SPF/DKIM i monitoruj logi CT.\n")
         return sb.toString()
+    }
+
+    fun detectHashAlgo(hashInput: String): String {
+        return when (hashInput.trim().length) {
+            32 -> "MD5 (128-bit)"
+            40 -> "SHA-1 (160-bit)"
+            64 -> "SHA-256 (256-bit)"
+            else -> "Nieznany / nieobslugiwana dlugosc"
+        }
     }
 
     fun crackHash(hashInput: String, candidatesRaw: String, owned: Boolean): String {
@@ -136,19 +167,18 @@ object AuditEngine {
             else -> return "BLAD: Nieobslugiwana dlugosc skrotu (${target.length}). Obslugiwane: 32 (MD5), 40 (SHA1), 64 (SHA256)."
         }
         val customWords = candidatesRaw.split(Regex("[\\r\\n,]+")).map { it.trim() }.filter { it.isNotEmpty() }
-        val pool = if (customWords.isNotEmpty()) customWords + COMMON_WORDS else COMMON_WORDS
+        val pool = (customWords + COMMON_WORDS).distinct()
         val startNs = System.nanoTime()
         var attempts = 0
         for (word in pool) {
             attempts++
-            val digest = digestHex(algo, word)
-            if (digest == target) {
+            if (digestHex(algo, word) == target) {
                 val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
-                return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: CRACKED: $word\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (bcrypt / argon2) oraz dlugie unikalne hasla."
+                return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: CRACKED: $word\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (Argon2id / bcrypt) oraz dlugie unikalne hasla."
             }
         }
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
-        return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: NOT FOUND\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (bcrypt / argon2) oraz dlugie unikalne hasla."
+        return "=== HASH CRACKER REPORT ===\nAlgorytm: $algo\nCel: $target\nStatus: NOT FOUND\nLiczba prob: $attempts\nCzas: ${String.format(Locale.US, "%.3f", elapsedMs)} ms\nObrona: Stosuj wolne haszowanie z sola (Argon2id / bcrypt) oraz dlugie unikalne hasla."
     }
 
     fun runAttackSurface(domainInput: String): String {
@@ -157,32 +187,29 @@ object AuditEngine {
             .substringBefore("/")
         if (cleanDomain.isEmpty()) return "BLAD: Podaj wlasna domene."
         val baseUrl = "https://$cleanDomain"
-        val panelPaths = listOf(
-            "/admin", "/administrator", "/wp-admin", "/login", "/phpmyadmin",
-            "/adminer.php", "/.git/HEAD", "/.env", "/actuator", "/actuator/env",
-            "/debug", "/server-status", "/config", "/swagger", "/manager/html", "/.well-known"
-        )
         val notFoundBody = httpGet("$baseUrl/nonexistent-ocean-probe-404-check")?.body ?: ""
         val openPanels = mutableListOf<String>()
-        for (p in panelPaths) {
+        for (p in PANEL_PATHS) {
             val r = httpGet("$baseUrl$p")
             if (r != null && r.code in 200..299 && r.body.isNotEmpty() && r.body != notFoundBody) {
                 openPanels.add("$p (HTTP ${r.code})")
             }
         }
-        val logPaths = listOf("/logs/app.log", "/log/error.log")
+        val logPaths = listOf("/logs/app.log", "/log/error.log", "/storage/logs/laravel.log", "/var/log/syslog")
         val logHits = mutableListOf<String>()
         for (lp in logPaths) {
             val r = httpGet("$baseUrl$lp")
             if (r != null && r.code in 200..299 && r.body.isNotEmpty()) {
                 val emails = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}").findAll(r.body).count()
                 val tokens = Regex("(token|api[_-]?key|secret|bearer)[=: ]+[A-Za-z0-9._-]{8,}", RegexOption.IGNORE_CASE).findAll(r.body).count()
-                logHits.add("$lp -> tokens=$tokens, emails=$emails")
+                if (emails > 0 || tokens > 0) {
+                    logHits.add("$lp -> tokens=$tokens, emails=$emails")
+                }
             }
         }
         val keyPaths = listOf(
             "/.ssh/id_rsa", "/server.key", "/private.key", "/privkey.pem",
-            "/.ssh/id_ed25519", "/key.pem", "/ssl/private.key"
+            "/.ssh/id_ed25519", "/key.pem", "/ssl/private.key", "/id_rsa"
         )
         val keyHits = mutableListOf<String>()
         for (kp in keyPaths) {
@@ -202,29 +229,29 @@ object AuditEngine {
         return buildString {
             append("=== ATTACK SURFACE SCANNER ===\n")
             append("EXPOSURE: $severity | Loot: $totalLoot\n")
-            append("[Karta 1: Panels (${openPanels.size})] ${if (openPanels.isEmpty()) "Brak otwartych paneli" else openPanels.joinToString("; ")}\n")
-            append("  Obrona: Uwierzytelnianie i usuwanie nieuzywanych paneli.\n")
+            append("[Karta 1: Panels (${openPanels.size}/${PANEL_PATHS.size})] ${if (openPanels.isEmpty()) "Brak otwartych paneli" else openPanels.joinToString("; ")}\n")
+            append("  Obrona: Uwierzytelnianie, ograniczenie IP i usuwanie nieuzywanych endpointow.\n")
             append("[Karta 2: Logs (${logHits.size})] ${if (logHits.isEmpty()) "Brak wyciekow w logach" else logHits.joinToString("; ")}\n")
-            append("  Obrona: Nie udostepniaj logow w katalogu web i maskuj sekrety.\n")
+            append("  Obrona: Nie udostepniaj logow w katalogu web, rotuj logi i maskuj sekrety.\n")
             append("[Karta 3: Keys (${keyHits.size})] ${if (keyHits.isEmpty()) "Brak kluczy prywatnych" else keyHits.joinToString("; ")}\n")
-            append("  Obrona: Trzymaj klucze poza web root i rotuj przy ekspozycji.\n")
+            append("  Obrona: Trzymaj klucze poza web root, stosuj chmod 600 i rotuj klucze przy ekspozycji.\n")
         }
     }
 
     fun scanFirmwareBytes(bytes: ByteArray, label: String): String {
-        if (bytes.isEmpty()) return "BLAD: Pusty plik binarny."
+        if (bytes.isEmpty()) return "BLAD: Pusty plik binarny lub brak dostepu do odczytu."
         val asciiStrings = extractAsciiStrings(bytes, 4)
         val utf16Strings = extractUtf16LeStrings(bytes, 4)
         val combined = asciiStrings + utf16Strings
         val patterns = listOf(
             "AWS_KEY" to Regex("AKIA[0-9A-Z]{16}"),
-            "GOOGLE_API" to Regex("Alza[0-9A-Za-z_-]{35}"),
+            "GOOGLE_API" to Regex("AIza[0-9A-Za-z_-]{35}"),
             "STRIPE_KEY" to Regex("(sk_live|sk_test)[0-9A-Za-z_]{8,}"),
             "PRIVATE_KEY" to Regex("-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
             "CREDENTIAL_ASSIGN" to Regex("(password|pwd|passwd)\\s*=\\s*[^\\s\"';]+", RegexOption.IGNORE_CASE),
             "JWT" to Regex("eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{4,}")
         )
-        val findings = mutableListOf<String>()
+        val findings = LinkedHashSet<String>()
         for (str in combined) {
             for ((kind, rx) in patterns) {
                 for (m in rx.findAll(str)) {
@@ -249,9 +276,9 @@ object AuditEngine {
             if (findings.isEmpty()) {
                 append("Brak dopasowan sekretow (stan pusty / czysty).\n")
             } else {
-                findings.take(40).forEach { append("  * $it\n") }
+                findings.take(50).forEach { append("  * $it\n") }
             }
-            append("Obrona: Nie umieszczaj poswiadczen na sztywno; uzywaj secure element lub sekretow per-device.\n")
+            append("Obrona: Nie umieszczaj poswiadczen na sztywno; uzywaj secure element, Android Keystore lub sekretow per-device.\n")
         }
     }
 
@@ -404,10 +431,10 @@ object AuditEngine {
         return try {
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 3500
-                readTimeout = 3500
+                connectTimeout = 4000
+                readTimeout = 4000
                 instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "OceanAuditSuite/1.0")
+                setRequestProperty("User-Agent", "OceanAuditSuite/2.0")
             }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream

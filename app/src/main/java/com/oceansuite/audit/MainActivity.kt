@@ -6,25 +6,26 @@ import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,272 +34,283 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0A0C0E)) {
-                    OceanAuditSuiteScreen()
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    OceanAuditScreen()
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun OceanAuditSuiteScreen() {
-    val ctx = LocalContext.current
+fun OceanAuditScreen() {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tabs = listOf("Bucket", "Doppelganger", "Hash", "Surface", "Firmware", "Keystroke", "PMKID")
-    var activeTab by remember { mutableStateOf("Hash") }
+    var selectedTab by remember { mutableStateOf(0) }
 
     var brandInput by remember { mutableStateOf("") }
     var bucketOwned by remember { mutableStateOf(false) }
 
     var domainInput by remember { mutableStateOf("") }
 
-    var hashInput by remember { mutableStateOf("5f4dcc3b5aa765d61d8327deb882cf99") }
-    var candidatesInput by remember { mutableStateOf("password\nadmin\n123456") }
-    var hashOwned by remember { mutableStateOf(true) }
+    var hashInput by remember { mutableStateOf("") }
+    var candidatesInput by remember { mutableStateOf("") }
+    var hashOwned by remember { mutableStateOf(false) }
 
     var surfaceDomain by remember { mutableStateOf("") }
 
     var firmwarePath by remember { mutableStateOf("/sdcard/OceanAuditSuite/OceanAuditSuite.apk") }
 
-    var vbsLine by remember { mutableStateOf("echo LAB_ONLY_CHECK") }
+    var vbsText by remember { mutableStateOf("echo LAB_ONLY") }
     var vbsDelay by remember { mutableStateOf("500") }
     var vbsKey by remember { mutableStateOf("ENTER") }
 
     var pmkidLine by remember { mutableStateOf("") }
     var pmkidOwned by remember { mutableStateOf(false) }
 
-    var outputText by remember { mutableStateOf("Gotowy do pracy.") }
+    var output by remember { mutableStateOf("Gotowe. Wybierz modul i podaj wlasne dane wejsciowe.") }
+    var busy by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(12.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Ocean Audit Suite", color = Color(0xFF00E676), style = MaterialTheme.typography.headlineSmall)
+        Text("OCEAN AUDIT SUITE v2.0", style = MaterialTheme.typography.titleLarge)
 
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            tabs.forEach { tab ->
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            tabs.forEachIndexed { idx, label ->
                 FilterChip(
-                    selected = activeTab == tab,
-                    onClick = { activeTab = tab },
-                    label = { Text(tab) }
+                    selected = selectedTab == idx,
+                    onClick = { selectedTab = idx },
+                    label = { Text(label) }
                 )
             }
         }
 
-        when (activeTab) {
-            "Bucket" -> {
+        when (selectedTab) {
+            0 -> {
                 OutlinedTextField(
                     value = brandInput,
                     onValueChange = { brandInput = it },
-                    label = { Text("Własna marka lub bucket") },
+                    label = { Text("Wlasna marka lub bucket (np. moj-bucket)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = bucketOwned, onCheckedChange = { bucketOwned = it })
-                    Text("I own this bucket / brand", color = Color.White)
+                    Text("I own this bucket / brand")
                 }
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = "Skanowanie S3/GCS..."
-                            outputText = withContext(Dispatchers.IO) { AuditEngine.runBucketBuster(brandInput, bucketOwned) }
+                            output = withContext(Dispatchers.IO) {
+                                AuditEngine.runBucketBuster(brandInput, bucketOwned)
+                            }
+                            busy = false
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("RAID", color = Color.White) }
+                    }
+                ) { Text(if (busy) "SKANOWANIE..." else "RAID") }
             }
 
-            "Doppelganger" -> {
+            1 -> {
                 OutlinedTextField(
                     value = domainInput,
                     onValueChange = { domainInput = it },
-                    label = { Text("Własna domena") },
+                    label = { Text("Wlasna domena (np. przyklad.pl)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = "Sprawdzanie DNS A/MX..."
-                            outputText = withContext(Dispatchers.IO) { AuditEngine.runDoppelganger(domainInput) }
+                            output = withContext(Dispatchers.IO) {
+                                AuditEngine.runDoppelganger(domainInput)
+                            }
+                            busy = false
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Skanuj radar domen") }
+                    }
+                ) { Text(if (busy) "RADAR..." else "Skanuj radar domen") }
             }
 
-            "Hash" -> {
-                val detected = when (hashInput.trim().length) {
-                    32 -> "MD5"
-                    40 -> "SHA1"
-                    64 -> "SHA256"
-                    else -> "Nieznany (${hashInput.trim().length})"
-                }
+            2 -> {
+                Text("Wykryty typ: ${AuditEngine.detectHashAlgo(hashInput)}")
                 OutlinedTextField(
                     value = hashInput,
                     onValueChange = { hashInput = it },
-                    label = { Text("Skrót HEX (MD5 / SHA1 / SHA256) — wykryto: $detected") },
+                    label = { Text("Skrot HEX (32 MD5 / 40 SHA1 / 64 SHA256)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = candidatesInput,
                     onValueChange = { candidatesInput = it },
-                    label = { Text("Kandydaci haseł (po jednym w linii lub po przecinku)") },
+                    label = { Text("Kandydaci hasel (oddzielone przecinkiem lub nowa linia)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = hashOwned, onCheckedChange = { hashOwned = it })
-                    Text("I own this hash", color = Color.White)
+                    Text("I own this hash")
                 }
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = withContext(Dispatchers.Default) {
+                            output = withContext(Dispatchers.IO) {
                                 AuditEngine.crackHash(hashInput, candidatesInput, hashOwned)
                             }
+                            busy = false
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("CRACK", color = Color.White) }
+                    }
+                ) { Text(if (busy) "OBLICZANIE..." else "CRACK") }
             }
 
-            "Surface" -> {
+            3 -> {
                 OutlinedTextField(
                     value = surfaceDomain,
                     onValueChange = { surfaceDomain = it },
-                    label = { Text("Własna domena (Panels / Logs / Keys)") },
+                    label = { Text("Wlasna domena (Panels / Logs / Keys)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = "Skanowanie paneli, logów i kluczy..."
-                            outputText = withContext(Dispatchers.IO) { AuditEngine.runAttackSurface(surfaceDomain) }
+                            output = withContext(Dispatchers.IO) {
+                                AuditEngine.runAttackSurface(surfaceDomain)
+                            }
+                            busy = false
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Skanuj Attack Surface") }
+                    }
+                ) { Text(if (busy) "SKANOWANIE..." else "Skanuj Attack Surface") }
             }
 
-            "Firmware" -> {
+            4 -> {
                 OutlinedTextField(
                     value = firmwarePath,
                     onValueChange = { firmwarePath = it },
-                    label = { Text("Ścieżka pliku binarnego/firmware") },
+                    label = { Text("Sciezka pliku binarnego / firmware / APK") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = withContext(Dispatchers.IO) {
+                            output = withContext(Dispatchers.IO) {
                                 val f = File(firmwarePath.trim())
-                                if (!f.exists() || !f.isFile) "BŁĄD: Nie znaleziono pliku ${firmwarePath.trim()}"
-                                else AuditEngine.scanFirmwareBytes(f.readBytes(), f.name)
+                                if (!f.exists() || !f.canRead()) {
+                                    "BLAD: Plik nie istnieje lub brak uprawnien do odczytu: ${f.absolutePath}"
+                                } else {
+                                    AuditEngine.scanFirmwareBytes(f.readBytes(), f.name)
+                                }
                             }
+                            busy = false
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Analizuj binarny plik") }
+                    }
+                ) { Text(if (busy) "ANALIZA..." else "Analizuj binarny plik") }
             }
 
-            "Keystroke" -> {
+            5 -> {
                 OutlinedTextField(
-                    value = vbsLine,
-                    onValueChange = { vbsLine = it },
+                    value = vbsText,
+                    onValueChange = { vbsText = it },
                     label = { Text("TYPE blok (linia tekstu)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = vbsDelay,
                     onValueChange = { vbsDelay = it },
-                    label = { Text("DELAY blok (ms)") },
+                    label = { Text("DELAY blok (ms, 50..60000)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = vbsKey,
                     onValueChange = { vbsKey = it },
-                    label = { Text("Klucz specjalny (ENTER, TAB, WIN+R, CTRL+C)") },
+                    label = { Text("Klucz specjalny (ENTER, TAB, WIN+R, CTRL+C, CTRL+V, CTRL+A)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = withContext(Dispatchers.IO) {
+                            output = withContext(Dispatchers.IO) {
                                 val delayVal = vbsDelay.trim().toIntOrNull() ?: 500
-                                val script = AuditEngine.buildKeystrokeVbs(vbsLine, delayVal, vbsKey)
-                                val outFile = File("/sdcard/OceanAuditSuite/keystroke_forge_lab_only.vbs")
-                                outFile.parentFile?.mkdirs()
-                                outFile.writeText(script)
-                                "Zapisano ${outFile.absolutePath}\n\n$script"
+                                val script = AuditEngine.buildKeystrokeVbs(vbsText, delayVal, vbsKey)
+                                val outDir = File("/sdcard/OceanAuditSuite")
+                                if (!outDir.exists()) outDir.mkdirs()
+                                val outFile = File(outDir, "keystroke_forge_lab_only.vbs")
+                                outFile.writeText(script, Charsets.UTF_8)
+                                "Zapisano do: ${outFile.absolutePath}\n\n$script"
                             }
+                            busy = false
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("FORGE.VBS", color = Color.White) }
+                    }
+                ) { Text(if (busy) "GENEROWANIE..." else "FORGE.VBS") }
             }
 
-            "PMKID" -> {
+            6 -> {
                 OutlinedTextField(
                     value = pmkidLine,
                     onValueChange = { pmkidLine = it },
-                    label = { Text("Linia 22000 (WPA*01*...)") },
+                    label = { Text("Linia 22000 (WPA*01*<pmkid>*<ap>*<sta>*<essid>***)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = pmkidOwned, onCheckedChange = { pmkidOwned = it })
-                    Text("I own this network", color = Color.White)
+                    Text("I own this network")
                 }
                 Button(
+                    enabled = !busy,
                     onClick = {
+                        busy = true
                         scope.launch {
-                            outputText = withContext(Dispatchers.Default) {
+                            output = withContext(Dispatchers.IO) {
                                 AuditEngine.crackPmkid22000(pmkidLine, pmkidOwned, candidatesInput)
                             }
+                            busy = false
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("SNATCH", color = Color.White) }
+                    }
+                ) { Text(if (busy) "WERYFIKACJA..." else "SNATCH") }
             }
         }
 
-        Button(
-            onClick = {
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("OceanAuditSuite", outputText))
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Kopiuj wynik do schowka") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("OceanAuditOutput", output))
+            }) { Text("Kopiuj wynik do schowka") }
+        }
 
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = outputText,
-            color = Color(0xFFE0F2F1),
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.fillMaxWidth()
+        OutlinedTextField(
+            value = output,
+            onValueChange = { output = it },
+            label = { Text("Raport / Wynik") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 220.dp),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
         )
     }
 }
