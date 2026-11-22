@@ -119,11 +119,22 @@ object AuditEngine {
     }
 
     fun runDoppelganger(domainInput: String): String {
-        val candidates = generateLookalikes(domainInput)
+        val cleanRoot = domainInput.trim().lowercase(Locale.ROOT)
+            .replace(Regex("^https?://"), "")
+            .substringBefore("/")
+        val candidates = generateLookalikes(cleanRoot)
         if (candidates.isEmpty()) return "BLAD: Podaj poprawna domene (np. przyklad.pl)."
+        val spfTxt = httpGet("https://dns.google/resolve?name=$cleanRoot&type=TXT")?.body ?: ""
+        val dmarcTxt = httpGet("https://dns.google/resolve?name=_dmarc.$cleanRoot&type=TXT")?.body ?: ""
+        val caaResp = httpGet("https://dns.google/resolve?name=$cleanRoot&type=CAA")?.body ?: ""
+        val hasSpf = spfTxt.contains("v=spf1", ignoreCase = true)
+        val hasDmarc = dmarcTxt.contains("v=dmarc1", ignoreCase = true)
+        val hasCaa = caaResp.contains("\"data\"")
+
         val sb = StringBuilder()
-        sb.append("=== DOPPELGANGER RADAR ===\n")
-        sb.append("Autoryzowane rozpoznanie wlasnej domeny: ${domainInput.trim()}\n")
+        sb.append("=== DOPPELGANGER & DNS POSTURE RADAR ===\n")
+        sb.append("Domena bazowa: $cleanRoot\n")
+        sb.append("Polityka DNS: SPF=${if (hasSpf) "OK" else "BRAK"} | DMARC=${if (hasDmarc) "OK" else "BRAK"} | CAA=${if (hasCaa) "OK" else "BRAK"}\n")
         var regCount = 0
         var mxCount = 0
         for (cand in candidates) {
@@ -144,7 +155,7 @@ object AuditEngine {
             sb.append("$cand -> $status\n")
         }
         sb.append("Podsumowanie: zarejestrowane=$regCount, z MX=$mxCount, sprawdzone=${candidates.size}\n")
-        sb.append("Obrona: Rejestruj kluczowe warianty, wdrazaj DMARC/SPF/DKIM i monitoruj logi CT.\n")
+        sb.append("Obrona: Utrzymuj rekordy SPF/DMARC/CAA, monitoruj podobne domeny i rejestruj krytyczne warianty.\n")
         return sb.toString()
     }
 
@@ -185,8 +196,9 @@ object AuditEngine {
         val cleanDomain = domainInput.trim()
             .replace(Regex("^https?://"), "")
             .substringBefore("/")
-        if (cleanDomain.isEmpty()) return "BLAD: Podaj wlasna domene."
+        if (cleanDomain.isEmpty()) return "BLAD: Podaj domene (np. przyklad.pl)."
         val baseUrl = "https://$cleanDomain"
+        val homeResp = httpGet(baseUrl)
         val notFoundBody = httpGet("$baseUrl/nonexistent-ocean-probe-404-check")?.body ?: ""
         val openPanels = mutableListOf<String>()
         for (p in PANEL_PATHS) {
@@ -219,16 +231,19 @@ object AuditEngine {
                 keyHits.add("CAPTURED $kp -> $masked")
             }
         }
+        val secHeaders = homeResp?.secHeaders ?: "Brak danych HTTP"
+        val missingCount = secHeaders.split(",").count { it.contains("BRAK") }
         val totalLoot = openPanels.size + logHits.size + keyHits.size
         val modulesWithHits = listOf(openPanels.isNotEmpty(), logHits.isNotEmpty(), keyHits.isNotEmpty()).count { it }
         val severity = when {
             modulesWithHits == 3 -> "CRITICAL: FULL ATTACK SURFACE EXPOSED"
-            totalLoot > 0 -> "EXPOSED"
+            totalLoot > 0 || missingCount >= 3 -> "EXPOSED"
             else -> "CLEAN"
         }
         return buildString {
-            append("=== ATTACK SURFACE SCANNER ===\n")
-            append("EXPOSURE: $severity | Loot: $totalLoot\n")
+            append("=== ATTACK SURFACE & HEADER AUDIT ===\n")
+            append("Cel: $cleanDomain | EXPOSURE: $severity | Loot: $totalLoot | Brakujace naglowki: $missingCount\n")
+            append("[Naglowki HTTP] $secHeaders\n")
             append("[Karta 1: Panels (${openPanels.size}/${PANEL_PATHS.size})] ${if (openPanels.isEmpty()) "Brak otwartych paneli" else openPanels.joinToString("; ")}\n")
             append("  Obrona: Uwierzytelnianie, ograniczenie IP i usuwanie nieuzywanych endpointow.\n")
             append("[Karta 2: Logs (${logHits.size})] ${if (logHits.isEmpty()) "Brak wyciekow w logach" else logHits.joinToString("; ")}\n")
@@ -425,7 +440,7 @@ object AuditEngine {
         return -1
     }
 
-    private data class HttpResult(val code: Int, val body: String)
+    private data class HttpResult(val code: Int, val body: String, val secHeaders: String)
 
     private fun httpGet(urlStr: String): HttpResult? {
         return try {
@@ -437,10 +452,16 @@ object AuditEngine {
                 setRequestProperty("User-Agent", "OceanAuditSuite/2.0")
             }
             val code = conn.responseCode
+            val hsts = if (!conn.getHeaderField("Strict-Transport-Security").isNullOrBlank()) "HSTS=OK" else "HSTS=BRAK"
+            val csp = if (!conn.getHeaderField("Content-Security-Policy").isNullOrBlank()) "CSP=OK" else "CSP=BRAK"
+            val xfo = if (!conn.getHeaderField("X-Frame-Options").isNullOrBlank()) "XFO=OK" else "XFO=BRAK"
+            val xcto = if (!conn.getHeaderField("X-Content-Type-Options").isNullOrBlank()) "XCTO=OK" else "XCTO=BRAK"
+            val srv = conn.getHeaderField("Server") ?: "ukryty"
+            val xpb = conn.getHeaderField("X-Powered-By") ?: "ukryty"
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
             conn.disconnect()
-            HttpResult(code, body)
+            HttpResult(code, body, "$hsts, $csp, $xfo, $xcto, Server=$srv, X-Powered-By=$xpb")
         } catch (_: Exception) {
             null
         }

@@ -301,6 +301,19 @@ fun OceanAuditScreen() {
                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("OceanAuditOutput", output))
             }) { Text("Kopiuj wynik do schowka") }
+            OutlinedButton(onClick = {
+                val outDir = File("/sdcard/OceanAuditSuite")
+                if (!outDir.exists()) outDir.mkdirs()
+                val safeTarget = when (selectedTab) {
+                    0 -> brandInput.trim().replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                    1 -> domainInput.trim().replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                    3 -> surfaceDomain.trim().replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                    else -> "module_${selectedTab}"
+                }.ifEmpty { "audit" }
+                val reportFile = File(outDir, "audit_report_${safeTarget}.txt")
+                reportFile.writeText(output, Charsets.UTF_8)
+                output = "Zapisano raport: ${reportFile.absolutePath}\n\n$output"
+            }) { Text("Zapisz raport .txt") }
         }
 
         OutlinedTextField(
