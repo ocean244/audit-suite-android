@@ -11,6 +11,7 @@ RELEASE_SCRIPT="${PROJECT_DIR}/build_and_release_v2.sh"
 [ -f "$MAIN_FILE" ] || { echo "BLAD: Brak pliku $MAIN_FILE" >&2; exit 1; }
 
 python3 - "$ENGINE_FILE" << 'PYEOF'
+import re
 import sys
 from pathlib import Path
 
@@ -164,28 +165,7 @@ replacement = '''    fun runDoppelganger(domainInput: String): String {
 
 updated = src[:s_idx] + replacement + src[e_idx:]
 
-old_http = """    private data class HttpResult(val code: Int, val body: String)
-
-    private fun httpGet(urlStr: String): HttpResult? {
-        return try {
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 4000
-                readTimeout = 4000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "OceanAuditSuite/2.0")
-            }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            conn.disconnect()
-            HttpResult(code, body)
-        } catch (_: Exception) {
-            null
-        }
-    }"""
-
-new_http = """    private data class HttpResult(val code: Int, val body: String, val secHeaders: String)
+new_http = '''    private data class HttpResult(val code: Int, val body: String, val secHeaders: String)
 
     private fun httpGet(urlStr: String): HttpResult? {
         return try {
@@ -210,12 +190,16 @@ new_http = """    private data class HttpResult(val code: Int, val body: String,
         } catch (_: Exception) {
             null
         }
-    }"""
+    }'''
 
-if old_http not in updated:
-    raise RuntimeError("Nie znaleziono bloku httpGet w AuditEngine.kt")
+pattern = re.compile(
+    r"    private data class HttpResult\(.*?^    \}",
+    re.DOTALL | re.MULTILINE
+)
+if not pattern.search(updated):
+    raise RuntimeError("Nie znaleziono bloku HttpResult/httpGet w AuditEngine.kt")
 
-updated = updated.replace(old_http, new_http, 1)
+updated = pattern.sub(new_http, updated, count=1)
 p.write_text(updated, encoding="utf-8")
 PYEOF
 
